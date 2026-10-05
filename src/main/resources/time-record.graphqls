@@ -1,0 +1,13 @@
+type Query {
+  timeRecords(where: TimeRecordBoolExp!, limit: Int = 100, offset: Int = 0, orderBy: [TimeRecordOrderBy!]): [TimeRecord!]!
+  timeRecordStats(where: TimeRecordBoolExp!): TimeRecordStats!
+}
+type TimeRecord { id: String! date: String categoryId: String durationMinutes: Int }
+type TimeRecordStats { count: String! durationMinutes: DurationStats }
+type DurationStats { sum: String }
+input TimeRecordBoolExp { date: DateComparison! id: IdComparison categoryId: IdComparison durationMinutes: IntComparison }
+input DateComparison { _gte: String! _lt: String! }
+input IdComparison { _eq: String! }
+input IntComparison { _gte: Int _lte: Int _eq: Int }
+input TimeRecordOrderBy { date: OrderDirection id: OrderDirection durationMinutes: OrderDirection }
+enum OrderDirection { Asc Desc }

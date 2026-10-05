@@ -1,0 +1,37 @@
+server:
+  port: ${AIO_QUERY_PORT:45680}
+  max-http-request-header-size: 8KB
+  tomcat:
+    connection-timeout: 5s
+    max-swallow-size: 64KB
+    threads:
+      max: 40
+spring:
+  application:
+    name: aio-life-query
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+      use-big-decimal-for-floats: true
+  data:
+    redis:
+      host: ${AIO_QUERY_REDIS_HOST:127.0.0.1}
+      port: ${AIO_QUERY_REDIS_PORT:6379}
+      password: ${AIO_QUERY_REDIS_PASSWORD:}
+      timeout: 1s
+      connect-timeout: 1s
+management:
+  server:
+    port: ${AIO_QUERY_MANAGEMENT_PORT:45681}
+    address: ${AIO_QUERY_MANAGEMENT_ADDRESS:127.0.0.1}
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+aio:
+  query:
+    access-url: ${AIO_QUERY_ACCESS_URL:http://127.0.0.1:45678/api/internal/query/access/check-token}
+    hasura-url: ${AIO_QUERY_HASURA_URL:http://127.0.0.1:45682/graphql}
+    service-key: ${AIO_QUERY_SERVICE_KEY:}
+    webhook-key: ${AIO_QUERY_WEBHOOK_KEY:}
+    audit-directory: ${AIO_QUERY_AUDIT_DIRECTORY:./artifacts/audit}

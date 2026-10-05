@@ -1,0 +1,9 @@
+target/
+.cache/
+.env
+.env.*
+!.env.example
+artifacts/
+*.log
+.DS_Store
+.idea/

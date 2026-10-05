@@ -1,0 +1,211 @@
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -1,4 +1,5 @@
+ pluginManagement {
++    repositories { mavenCentral(); gradlePluginPortal() }
+     val quarkusPluginVersion: String by settings
+     val quarkusPluginId: String by settings
+ 
+@@ -15,7 +16,4 @@
+ include(":ndc-sqlgen")
+ include(":ndc-app")
+ include(":ndc-cli")
+-include(":ndc-connector-oracle")
+ include(":ndc-connector-mysql")
+-include(":ndc-connector-snowflake")
+-include(":ndc-connector-trino")
+\ No newline at end of file
+--- a/ndc-connector-mysql/build.gradle.kts
++++ b/ndc-connector-mysql/build.gradle.kts
+@@ -12,13 +12,7 @@
+ repositories {
+     mavenLocal()
+     mavenCentral()
+-    maven {
+-        url = uri("https://repo.jooq.org/repo")
+-        credentials {
+-            username = env.fetch("JOOQ_PRO_EMAIL")
+-            password = env.fetch("JOOQ_PRO_LICENSE")
+-        }
+-    }
++
+ }
+ 
+ val quarkusPlatformGroupId: String by project
+@@ -35,12 +29,8 @@
+     // JDBC driver
+     implementation("io.quarkus:quarkus-jdbc-mysql")
+ 
+-    implementation("org.jooq.pro:jooq:3.19.8")
+-    modules {
+-        module("org.jooq:jooq") {
+-            replacedBy("org.jooq.pro:jooq", "Oracle requires jOOQ pro")
+-        }
+-    }
++    implementation("org.jooq:jooq:3.19.8")
++
+ }
+ 
+ tasks.withType<Test> {
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLDataConnectorService.kt
++++ b/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLDataConnectorService.kt
+@@ -29,8 +29,7 @@
+         capabilities = Capabilities(
+             query = QueryCapabilities(
+                 aggregates = mapOf(),
+-                variables = mapOf(),
+-                explain = mapOf()
++                variables = mapOf()
+             ),
+             mutation = MutationCapabilities(),
+             relationships = RelationshipsCapabilities(
+@@ -63,7 +62,7 @@
+         return rowsets
+     }
+ 
+-    override val jooqDialect = SQLDialect.MYSQL_8_0_31
++    override val jooqDialect = SQLDialect.MYSQL
+     override val jooqSettings = commonDSLContextSettings
+     override val sqlGenerator = JsonQueryGenerator
+     override val mutationTranslator = MutationTranslator
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLJDBCSchemaGenerator.kt
++++ b/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLJDBCSchemaGenerator.kt
+@@ -263,6 +263,7 @@
+                 // Integer Types
+                 "TINYINT" -> NDCScalar.INT8
+                 "SMALLINT" -> NDCScalar.INT16
++                "SMALLINT UNSIGNED" -> NDCScalar.INT32
+                 "MEDIUMINT" -> NDCScalar.INT32
+                 "INT", "INTEGER" -> NDCScalar.INT32
+                 "BIGINT" -> NDCScalar.INT64
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/JSONGenerator.kt
++++ b/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/JSONGenerator.kt
+@@ -68,7 +68,10 @@
+         }
+ 
+         val baseQuery = DSL.select(
+-            baseTable.asterisk()
++            (io.hasura.ndc.common.ConnectorConfiguration.Loader.config.tables
++                .firstOrNull { it.tableName == request.collection }
++                ?: throw jakarta.ws.rs.BadRequestException("Unknown collection"))
++                .columns.map { DSL.field(DSL.name(effectiveAlias, it.name)) }
+         ).select(
+             getSelectOrderFields(request, effectiveAlias)
+         ).from(
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/services/dataConnectors/BaseDataConnectorService.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/services/dataConnectors/BaseDataConnectorService.kt
+@@ -203,6 +203,8 @@
+     val commonDSLContextSettings: Settings =
+         Settings()
+             .withRenderFormatted(true)
++            .withExecuteLogging(false)
++            .withRenderGroupConcatMaxLenSessionVariable(false)
+             .withStatementType(StatementType.STATIC_STATEMENT)
+ 
+     @WithSpan
+@@ -229,7 +231,11 @@
+ 
+     @WithSpan
+     open fun executeDbQuery(query: ResultQuery<*>, ctx: DSLContext): Result<out Record> {
+-        return ctx.fetch(query)
++        query.attach(ctx.configuration())
++        return try { query.queryTimeout(5).fetch() }
++        catch (_: org.jooq.exception.DataAccessException) {
++            throw jakarta.ws.rs.InternalServerErrorException("Query execution failed")
++        }
+     }
+ 
+     protected open fun executeAndSerializeMutation(
+@@ -246,14 +252,8 @@
+ 
+     @WithSpan
+     open fun mkDSLCtx(requestArguments: Map<String, Any>?): DSLContext {
+-        val base = ConnectorConfiguration.Loader.config
+-        val override = (requestArguments?.get("connection_string") as? String)
+-        val effectiveConfig = if (override.isNullOrBlank()) {
+-            base
+-        } else {
+-            base.copy(jdbcUrl = io.hasura.ndc.common.JdbcUrlConfig.Literal(override))
+-        }
+-        val ds = dataSourceProvider.getDataSource(effectiveConfig)
++        if (!requestArguments.isNullOrEmpty()) throw jakarta.ws.rs.BadRequestException("Request arguments are disabled")
++        val ds = dataSourceProvider.getDataSource(ConnectorConfiguration.Loader.config)
+         return DSL.using(ds, jooqDialect, jooqSettings)
+     }
+ 
+@@ -268,10 +268,7 @@
+ 
+     @WithSpan
+     override fun explainQuery(request: QueryRequest): ExplainResponse {
+-        val dslCtx = mkDSLCtx(request.request_arguments)
+-        val query = buildQuery(request)
+-        val explain = dslCtx.explain(query)
+-        return ExplainResponse(query = query.sql, lines = listOf(explain.plan()))
++        throw jakarta.ws.rs.ForbiddenException("Explain is disabled")
+     }
+ 
+     @WithSpan
+@@ -283,8 +280,7 @@
+ 
+     @WithSpan
+     override fun handleMutation(request: MutationRequest): MutationResponse {
+-        val dslCtx = mkDSLCtx(request.request_arguments)
+-        return executeAndSerializeMutation(request, dslCtx)
++        throw jakarta.ws.rs.ForbiddenException("Mutations are disabled")
+     }
+ 
+     @WithSpan
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/ExceptionMappers.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/ExceptionMappers.kt
+@@ -59,13 +59,13 @@
+                 .status(status)
+                 .entity(
+                     ErrorResponse(
+-                        message = message ?: exception.message ?: "An uncaught error occurred",
+-                        details = mapOf("stacktrace" to exception.stackTraceToString())
++                        message = "Connector request failed",
++                        details = emptyMap()
+                     )
+                 )
+                 .build()
+         } finally {
+-            logger.error("Uncaught exception", exception)
++            logger.error("Connector request failed: " + exception.javaClass.simpleName)
+         }
+     }
+ }
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/Filters.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/Filters.kt
+@@ -14,22 +14,13 @@
+     @Inject
+     private lateinit var logger: Logger
+ 
+-    @ServerRequestFilter(priority = 0)
+-    fun logBodyFilter(info: UriInfo, request: HttpServerRequest, ctx: ContainerRequestContext) {
+-        request.body { b ->
+-            logger.debug("INCOMING IR:")
+-            logger.debug(b.result())
+-        }
+-    }
+-
+     @ServerRequestFilter
+     fun tokenFilter(ctx: ContainerRequestContext): Response? {
+         if(ctx.uriInfo.path.startsWith("/health")) return null
+ 
+         val secret = System.getenv("HASURA_SERVICE_TOKEN_SECRET")
+         if (secret.isNullOrEmpty()) {
+-            logger.warn("Environment variable HASURA_SERVICE_TOKEN_SECRET not set. Token validation is bypassed.")
+-            return null
++            return Response.status(Response.Status.SERVICE_UNAVAILABLE).build()
+         }
+ 
+         val authHeader = ctx.getHeaderString(HttpHeaders.AUTHORIZATION)
+@@ -43,7 +34,7 @@
+             logger.error("Token is empty")
+             return Response.status(Response.Status.UNAUTHORIZED).build()
+         }
+-        if (token != secret) {
++        if (!java.security.MessageDigest.isEqual(token.toByteArray(), secret.toByteArray())) {
+             logger.error("Token is invalid")
+             return Response.status(Response.Status.UNAUTHORIZED).build()
+         }

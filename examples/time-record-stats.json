@@ -1,0 +1,8 @@
+{
+  "domain": "time",
+  "schemaVersion": "time-record-v1",
+  "policyVersion": "time-record-v1",
+  "operationName": "Summary",
+  "query": "query Summary($start:String!,$end:String!){timeRecordStats(where:{date:{_gte:$start,_lt:$end}}){count durationMinutes{sum}}}",
+  "variables": {"start":"2026-09-01","end":"2026-10-01"}
+}

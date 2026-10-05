@@ -1,0 +1,72 @@
+package top.aiolife.query;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.net.URI;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
+
+class QueryServiceTest {
+    private final ObjectMapper json = new ObjectMapper();
+    private final AccessClient access = mock(AccessClient.class);
+    private final ExecutionStore store = mock(ExecutionStore.class);
+    private final BoundedHttp http = mock(BoundedHttp.class);
+    private final QueryAudit audit = mock(QueryAudit.class);
+    private final AccessClient.Access user = new AccessClient.Access("9007199254740993", "aio-life-query", "grant", "login", Long.MAX_VALUE);
+    private QueryService service;
+    private QueryCompiler.Request request;
+
+    @BeforeEach void setup() throws Exception {
+        var properties = new QueryProperties(URI.create("http://auth/evaluate"), URI.create("http://hasura/graphql"), "s".repeat(32), "w".repeat(32), Path.of("unused"));
+        service = new QueryService(access, new QueryCompiler(json), store, http, audit, properties, json);
+        request = new QueryCompiler.Request("time", QueryProperties.RELEASE, QueryProperties.RELEASE, "Q",
+                "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}){id categoryId durationMinutes} }", null);
+        when(access.evaluate("token")).thenReturn(user);
+        when(store.acquire(user.userId())).thenReturn(mock(ExecutionStore.Lease.class));
+        when(store.issue(eq("token"), eq(user), anyString(), any())).thenReturn("ticket");
+    }
+
+    @Test void preservesBigintAndRechecksBeforeDelivery() throws Exception {
+        when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
+                json.readTree("{\"data\":{\"timeRecords\":[{\"id\":\"r1\",\"categoryId\":9007199254740993,\"durationMinutes\":60}]}}")));
+        var result = json.valueToTree(service.execute("token", request));
+        assertEquals("9007199254740993", result.at("/result/timeRecords/0/categoryId").textValue());
+        verify(access, times(2)).evaluate("token"); verify(store).discard("ticket");
+        verify(audit).write(anyString(), eq(user), eq("SUCCEEDED"), anyString(), eq(1));
+    }
+
+    @Test void discardsPartialGraphqlData() throws Exception {
+        when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
+                json.readTree("{\"data\":{\"timeRecords\":[]},\"errors\":[{\"message\":\"secret database detail\"}]}")));
+        var error = assertThrows(QueryException.class, () -> service.execute("token", request));
+        assertFalse(error.getMessage().contains("secret")); verify(audit, never()).write(anyString(), any(), eq("SUCCEEDED"), any(), anyInt());
+    }
+
+    @Test void revokedBeforeDeliveryNeverReturnsData() throws Exception {
+        when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200, json.readTree("{\"data\":{\"timeRecords\":[]}}")));
+        when(access.evaluate("token")).thenReturn(user).thenThrow(QueryException.denied());
+        assertThrows(QueryException.class, () -> service.execute("token", request));
+        verify(audit, never()).write(anyString(), any(), eq("SUCCEEDED"), any(), anyInt());
+    }
+
+    @Test void expirationRoundingDoesNotChangeIdentityButIdentityChangesAreRejected() throws Exception {
+        when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
+                json.readTree("{\"data\":{\"timeRecords\":[]}}")));
+        when(access.evaluate("token")).thenReturn(user).thenReturn(new AccessClient.Access(
+                user.userId(), user.appId(), user.credentialId(), user.credentialType(), Long.MAX_VALUE - 1));
+        assertDoesNotThrow(() -> service.execute("token", request));
+        when(access.evaluate("token")).thenReturn(user).thenReturn(new AccessClient.Access(
+                "9007199254740994", user.appId(), user.credentialId(), user.credentialType(), Long.MAX_VALUE));
+        assertThrows(QueryException.class, () -> service.execute("token", request));
+    }
+
+    @Test void auditFailurePreventsDatabaseExecution() {
+        doThrow(new QueryException("AUDIT_UNAVAILABLE",503,"fixture")).when(audit).write(anyString(), any(), anyString(), any(), anyInt());
+        assertThrows(QueryException.class, () -> service.execute("token", request)); verifyNoInteractions(http);
+    }
+}
