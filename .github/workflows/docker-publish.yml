@@ -45,6 +45,8 @@ jobs:
           cache: maven
       - name: Test and package
         run: mvn -B -ntp verify -DfailIfNoTests=true
+      - name: Test metadata file security
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
       - name: Require all tests to run
         run: |
           python3 - <<'PY'

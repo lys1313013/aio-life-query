@@ -128,12 +128,15 @@ curl "$AIO_QUERY_URL/mcp" \
 
 未提供取消接口；HTTP 停止等待不等于数据库立刻停止，数据库与 JDBC 时限负责限制执行时间。审计按 UTC 日期写 JSONL 持久卷，仅记录身份、状态、版本、查询结构指纹和行数；不记录业务正文、变量、票据或结果。首期不自动清理审计，由运维配置保留期、采集和容量告警。
 
+只有通过认证和用户限流的执行请求才进入持久审计，认证失败和限流拒绝不触发同步落盘。审计目录权限为 `0700`、文件为 `0600`，追加旧文件前也会收紧权限；拒绝符号链接目录和文件。审计卷须支持 POSIX 权限且允许运行 UID 设置权限，否则拒绝执行查询。
+
 ## 构建与本地验证
 
 需要 JDK 21、Maven、Python 3、Docker。连接器第一次构建需要下载 Gradle/Kotlin/Quarkus 依赖。
 
 ```bash
 mvn test
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 bash scripts/build_connector.sh
 bash scripts/test_e2e.sh
 ```
@@ -155,7 +158,7 @@ bash scripts/test_e2e.sh
 1. 在目标数据库按 `deploy/readonly-account.sql.example` 创建运行账号。核对实际 `time_record` 的 6 个字段及数据类型；检查 `(user_id,is_deleted,date,id)` 查询计划并按现有迁移流程补索引。不要让查询服务自动迁移业务表。
 2. AIO Life 配置 `AIO_LIFE_QUERY_ACCESS_ENABLED=true`、随机 `AIO_LIFE_QUERY_ACCESS_SERVICE_KEY`（至少 32 字符）；`AIO_LIFE_QUERY_ACCESS_ALLOWED_APPS` 默认 `aio-life-query`。直接模式复用原身份体系，无需新增业务表或签发第二个 Token。
 3. 网关设置相同 `AIO_QUERY_SERVICE_KEY`、另一把随机 `AIO_QUERY_WEBHOOK_KEY`、独立 `AIO_QUERY_CONNECTOR_KEY`、`AIO_QUERY_ACCESS_URL`、`AIO_QUERY_REDIS_PASSWORD`。三把服务密钥均至少 32 字符。`AIO_QUERY_JDBC_URL` 使用只读账号，生产配置 MySQL TLS；凭据由部署平台注入，不提交 `.env`。
-4. `export AIO_QUERY_CONFIG_GID="$(id -g)"`，执行 `python3 scripts/build_metadata.py`，生成权限固定的本地 OpenDD / AuthConfig / Connector 配置。输出含 Webhook 密钥，权限 0640，放在受控目录；运行容器通过附加组读取。不要导入全库表结构。
+4. `export AIO_QUERY_CONFIG_GID="$(id -g)"`，执行 `python3 scripts/build_metadata.py`，生成权限固定的本地 OpenDD / AuthConfig / Connector 配置。输出含 Webhook 和 Connector 密钥，目录权限 `0750`、文件 `0640`；密钥先写入 `0600` 临时文件，完整写入后原子替换，失败时保留该文件的原版本并清理临时文件。运行容器通过附加组读取，该组只应包含可信部署账号；拒绝符号链接输出目录。不要导入全库表结构。
 5. 准备连接器及经验证的引擎镜像，设置 `AIO_QUERY_ENGINE_IMAGE` 为不可变镜像摘要。本地构建使用 `docker compose -f deploy/compose.yml up -d --build`；使用发布镜像时设置 `AIO_QUERY_GATEWAY_IMAGE` / `AIO_QUERY_CONNECTOR_IMAGE` 并执行 `docker compose -f deploy/compose.yml up -d --no-build`，具体拉取步骤见上面的镜像文档。仅网关的 45680 绑定宿主回环地址，由现有 HTTPS 代理转发 `/api/v1/` 和 `/mcp`；其余服务不发布端口。跨主机内部流量需配置 TLS。
 
 `scripts/build_engine.sh` 提供 Apache-2.0 源码引擎的固定 commit 构建入口，生产镜像需要单独运行相同端到端测试后发布。公开 `v3-engine` 镜像实际入口为 `ddn-engine-local-dev`，不能把开发验证直接当作生产镜像验收。源码构建、实际生产数据库结构、只读副本延迟、容量压测和发布网络均须在部署环境验证。

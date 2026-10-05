@@ -45,7 +45,7 @@ bash scripts/smoke_image.sh aio-life-query:local
 | push → `v*` 标签 | 上述检查成功后发布；版本标签使用 `v0.1.0` 等 SemVer 格式 |
 | 手动运行 | 所选 ref 完成检查；只有 `main` 或 `v*` 标签执行发布 |
 
-工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试发现失败、缺少报告或跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64。
+工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试任务包含 Java 测试及 Python 元数据文件权限、原子替换和失败恢复测试；发现失败、缺少 Java 报告或 Java 跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64。
 
 此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 MySQL 的完整隔离验收仍使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
 
