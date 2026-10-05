@@ -46,11 +46,12 @@ public class QueryService {
     }
 
     public Object execute(String token, QueryCompiler.Request request) {
+        // 未认证及限流拒绝不能触发同步落盘，避免绕过准入限制消耗审计资源。
+        var user = access.evaluate(token);
+        store.rate(user.userId());
         String queryId = UUID.randomUUID().toString();
-        AccessClient.Access user = null;
         String fingerprint = null;
         try {
-            user = access.evaluate(token); store.rate(user.userId());
             audit.write(queryId, user, "STARTED", null, 0);
             QueryCompiler.Plan plan = compiler.compile(request);
             fingerprint = ExecutionStore.hash(plan.query());

@@ -69,4 +69,28 @@ class QueryServiceTest {
         doThrow(new QueryException("AUDIT_UNAVAILABLE",503,"fixture")).when(audit).write(anyString(), any(), anyString(), any(), anyInt());
         assertThrows(QueryException.class, () -> service.execute("token", request)); verifyNoInteractions(http);
     }
+
+    @Test void authenticationFailureNeverTouchesAuditOrExecutionDependencies() {
+        var denied = new QueryException("AUTH_REQUIRED", 401, "fixture");
+        when(access.evaluate("invalid-token")).thenThrow(denied);
+        assertSame(denied, assertThrows(QueryException.class, () -> service.execute("invalid-token", request)));
+        verifyNoInteractions(audit, store, http);
+    }
+
+    @Test void rateRejectionNeverTouchesAuditOrDatabase() {
+        var limited = new QueryException("QUERY_LIMIT_EXCEEDED", 429, "fixture");
+        doThrow(limited).when(store).rate(user.userId());
+        assertSame(limited, assertThrows(QueryException.class, () -> service.execute("token", request)));
+        verifyNoInteractions(audit, http);
+        verify(store, never()).acquire(anyString());
+    }
+
+    @Test void admittedUnsupportedQueryIsStillAuditedWithoutDatabaseExecution() {
+        var invalid = new QueryCompiler.Request("time", QueryProperties.RELEASE, QueryProperties.RELEASE,
+                "Q", "mutation Q { invalid }", null);
+        assertThrows(QueryException.class, () -> service.execute("token", invalid));
+        verify(audit).write(anyString(), eq(user), eq("STARTED"), isNull(), eq(0));
+        verify(audit).write(anyString(), eq(user), eq("QUERY_UNSUPPORTED"), isNull(), eq(0));
+        verifyNoInteractions(http);
+    }
 }
