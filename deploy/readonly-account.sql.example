@@ -1,0 +1,6 @@
+-- 部署者在目标库执行；替换数据库名、连接来源与随机密码，不授予全库 SELECT。
+CREATE USER 'aio_query_read'@'CONNECTOR_HOST' IDENTIFIED BY 'REPLACE_WITH_RANDOM_PASSWORD';
+GRANT SELECT (id, date, category_id, duration, user_id, is_deleted)
+  ON aio_life.time_record TO 'aio_query_read'@'CONNECTOR_HOST';
+-- 可选索引需先核对现有迁移与 EXPLAIN，不能由服务启动时自动创建：
+-- CREATE INDEX idx_query_time_owner_date ON time_record(user_id, is_deleted, date, id);

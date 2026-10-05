@@ -1,0 +1,195 @@
+name: Build and Push Docker Image
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      AIO_QUERY_TEST_REDIS_PORT: '6379'
+    services:
+      redis:
+        image: redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+      - name: Test and package
+        run: mvn -B -ntp verify -DfailIfNoTests=true
+      - name: Require all tests to run
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path('target/surefire-reports').glob('TEST-*.xml'))
+          assert reports, 'Missing test reports'
+          suites = [ET.parse(path).getroot() for path in reports]
+          assert sum(int(suite.get('tests', 0)) for suite in suites) > 0
+          assert not any(int(suite.get(key, 0)) for suite in suites for key in ['failures', 'errors', 'skipped']), 'Tests failed or skipped'
+          PY
+      - name: Upload tested application JAR
+        uses: actions/upload-artifact@v6
+        with:
+          name: application-jar
+          path: target/aio-life-query-*.jar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: surefire-reports-${{ github.run_number }}
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  image-check:
+    name: Verify runtime image
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download tested application JAR
+        uses: actions/download-artifact@v6
+        with:
+          name: application-jar
+          path: ${{ runner.temp }}/query-jars
+      - name: Prepare minimal Docker context
+        run: bash scripts/prepare_image_context.sh "$RUNNER_TEMP/query-image" "$RUNNER_TEMP/query-jars"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build runtime image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ runner.temp }}/query-image
+          load: true
+          tags: aio-life-query:ci
+          cache-from: type=gha,scope=query-runtime
+          cache-to: type=gha,scope=query-runtime,mode=min
+      - name: Verify startup, audit permissions and unauthenticated boundaries
+        run: bash scripts/smoke_image.sh aio-life-query:ci
+
+  build-and-push:
+    name: Build and push amd64/arm64
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [test, image-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+    env:
+      ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
+      ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
+      ACR_USERNAME: ${{ secrets.ALIYUN_ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ALIYUN_ACR_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download tested application JAR
+        uses: actions/download-artifact@v6
+        with:
+          name: application-jar
+          path: ${{ runner.temp }}/query-jars
+      - name: Prepare minimal Docker context
+        run: bash scripts/prepare_image_context.sh "$RUNNER_TEMP/query-image" "$RUNNER_TEMP/query-jars"
+      - name: Resolve registry targets
+        id: targets
+        run: |
+          set -euo pipefail
+          image_name="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
+          echo "ghcr=ghcr.io/$image_name" >> "$GITHUB_OUTPUT"
+          if [[ -n "$ACR_REGISTRY$ACR_NAMESPACE$ACR_USERNAME$ACR_PASSWORD" ]]; then
+            test -n "$ACR_REGISTRY" && test -n "$ACR_NAMESPACE" && test -n "$ACR_USERNAME" && test -n "$ACR_PASSWORD" || {
+              echo 'ACR requires all four ALIYUN_ACR secrets'; exit 1;
+            }
+            echo "acr_enabled=true" >> "$GITHUB_OUTPUT"
+            echo "acr=$ACR_REGISTRY/$ACR_NAMESPACE/aio-life-query" >> "$GITHUB_OUTPUT"
+          else
+            echo "acr_enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Alibaba Cloud ACR
+        if: steps.targets.outputs.acr_enabled == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.ACR_REGISTRY }}
+          username: ${{ env.ACR_USERNAME }}
+          password: ${{ env.ACR_PASSWORD }}
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ steps.targets.outputs.ghcr }}
+            name=${{ steps.targets.outputs.acr || steps.targets.outputs.ghcr }},enable=${{ steps.targets.outputs.acr_enabled == 'true' }}
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=long
+          labels: |
+            org.opencontainers.image.title=aio-life-query
+            org.opencontainers.image.description=AIO Life Query authenticated read-only REST/MCP gateway (Java 21)
+      - name: Build and push runtime image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ runner.temp }}/query-image
+          push: true
+          platforms: linux/amd64,linux/arm64
+          # 与 aio-life-server 一致，兼容 ACR 的 manifest 类型。
+          provenance: false
+          sbom: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=query-runtime
+          cache-to: type=gha,scope=query-runtime,mode=min
+      - name: Record immutable image reference
+        env:
+          IMAGE: ${{ steps.targets.outputs.ghcr }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          printf 'Published gateway image: `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

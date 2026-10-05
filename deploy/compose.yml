@@ -1,0 +1,54 @@
+name: aio-life-query
+services:
+  gateway:
+    image: ${AIO_QUERY_GATEWAY_IMAGE:-aio-life-query:local}
+    build: ..
+    ports: ["127.0.0.1:45680:45680"]
+    environment:
+      AIO_QUERY_ACCESS_URL: ${AIO_QUERY_ACCESS_URL:?Set AIO Life internal check-token URL}
+      AIO_QUERY_MCP_ALLOWED_ORIGINS: ${AIO_QUERY_MCP_ALLOWED_ORIGINS:-}
+      AIO_QUERY_HASURA_URL: http://hasura:3000/graphql
+      AIO_QUERY_SERVICE_KEY: ${AIO_QUERY_SERVICE_KEY:?Set service secret}
+      AIO_QUERY_WEBHOOK_KEY: ${AIO_QUERY_WEBHOOK_KEY:?Set webhook secret}
+      AIO_QUERY_REDIS_HOST: redis
+      AIO_QUERY_REDIS_PASSWORD: ${AIO_QUERY_REDIS_PASSWORD:?Set Redis secret}
+    volumes: ["audit:/app/audit"]
+    networks: [query, gateway-outbound]
+    depends_on: [redis, hasura]
+    restart: unless-stopped
+  hasura:
+    image: ${AIO_QUERY_ENGINE_IMAGE:?Set verified engine image digest}
+    group_add: ["${AIO_QUERY_CONFIG_GID:?Set configuration group id}"]
+    command: ["--metadata-path", "/metadata/open_dd.json", "--authn-config-path", "/metadata/auth_config.json", "--ndc-response-size-limit", "1000000", "--request-body-limit", "65536"]
+    volumes: ["../.cache/hasura:/metadata:ro"]
+    networks: [query, connector]
+    depends_on: [mysql-connector]
+    restart: unless-stopped
+  mysql-connector:
+    image: ${AIO_QUERY_CONNECTOR_IMAGE:-aio-life-query-mysql-connector:local}
+    build:
+      context: ..
+      dockerfile: deploy/connector.Dockerfile
+    group_add: ["${AIO_QUERY_CONFIG_GID:?Set configuration group id}"]
+    environment:
+      JDBC_URL: ${AIO_QUERY_JDBC_URL:?Set readonly JDBC URL}
+      HASURA_SERVICE_TOKEN_SECRET: ${AIO_QUERY_CONNECTOR_KEY:?Set connector secret}
+      QUARKUS_OTEL_SDK_DISABLED: "true"
+      QUARKUS_HTTP_ACCESS_LOG_ENABLED: "false"
+    volumes: ["../.cache/hasura/configuration.json:/etc/connector/configuration.json:ro"]
+    networks: [connector, database-outbound]
+    restart: unless-stopped
+  redis:
+    image: redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
+    environment:
+      REDIS_PASSWORD: ${AIO_QUERY_REDIS_PASSWORD:?Set Redis secret}
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$REDIS_PASSWORD\" --save '' --appendonly no"]
+    networks: [query]
+    restart: unless-stopped
+networks:
+  query: {internal: true}
+  connector: {internal: true}
+  gateway-outbound: {}
+  database-outbound: {}
+volumes:
+  audit: {}

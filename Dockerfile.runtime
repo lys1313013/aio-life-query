@@ -1,0 +1,17 @@
+# CI 使用已通过测试的 JAR；amd64/arm64 共用同一份 Java 字节码。
+FROM eclipse-temurin:21-jre-alpine
+RUN apk add --no-cache tzdata \
+    && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo "Asia/Shanghai" > /etc/timezone \
+    && addgroup -g 10001 -S app \
+    && adduser -u 10001 -S app -G app \
+    && mkdir -p /app/audit \
+    && chown app:app /app /app/audit
+WORKDIR /app
+COPY --chown=app:app app.jar app.jar
+USER 10001:10001
+ENV TZ=Asia/Shanghai \
+    AIO_QUERY_AUDIT_DIRECTORY=/app/audit \
+    JAVA_OPTS="-Xms128m -Xmx512m -XX:+UseG1GC"
+EXPOSE 45680
+ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

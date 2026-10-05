@@ -1,0 +1,6 @@
+# 此文件覆盖根 .dockerignore；Connector 仅接收已编译的运行文件。
+**
+!.cache/
+!.cache/connector/
+!.cache/connector/quarkus-app/
+!.cache/connector/quarkus-app/**
