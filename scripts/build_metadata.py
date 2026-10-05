@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +13,25 @@ FIELDS = {'id': ('STRING', 'String!', 'id'), 'date': ('DATE', 'String', 'date'),
 
 def obj(kind, definition):
     return {'kind': kind, 'version': 'v1', 'definition': definition}
+
+def write_bundle(output, bundle):
+    # 容器通过受控附加组读取；其他用户不可遍历，密钥从创建时就不可公开读取。
+    if output.is_symlink():
+        raise ValueError('Metadata directory must not be a symbolic link')
+    output.mkdir(mode=0o750, parents=True, exist_ok=True)
+    output.chmod(0o750)
+    for name, value in bundle:
+        descriptor, temporary = tempfile.mkstemp(prefix='.' + name + '-', dir=output)
+        try:
+            with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+                stream.write(json.dumps(value, ensure_ascii=False, indent=2) + '\n')
+                stream.flush()
+                os.fsync(stream.fileno())
+                os.fchmod(stream.fileno(), 0o640)
+            os.replace(temporary, output / name)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
 def connector_config():
     columns = []
@@ -92,7 +112,5 @@ if __name__ == '__main__':
     metadata,schema=build(os.environ.get('AIO_QUERY_CONNECTOR_URL','http://mysql-connector:8080'),connector_key)
     auth={'version':'v4','definition':{'mode':{'webhook':{'url':{'value':os.environ.get('AIO_QUERY_AUTH_WEBHOOK_URL','http://gateway:45680/internal/hasura/auth')},
         'method':'POST','customHeadersConfig':{'body':{'headers':{'forward':['authorization']}},'headers':{'additional':{'X-AIO-Webhook-Key':key}}}}}}}
-    args.output.mkdir(parents=True,exist_ok=True)
-    for name,value in [('open_dd.json',metadata),('auth_config.json',auth),('ndc-schema.json',schema),('configuration.json',connector_config())]:
-        path=args.output/name;path.write_text(json.dumps(value,ensure_ascii=False,indent=2)+'\n');path.chmod(0o640)
+    write_bundle(args.output, [('open_dd.json',metadata),('auth_config.json',auth),('ndc-schema.json',schema),('configuration.json',connector_config())])
     print('Built time_record OpenDD bundle at '+str(args.output))
