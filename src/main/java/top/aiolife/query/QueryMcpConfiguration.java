@@ -1,5 +1,6 @@
 package top.aiolife.query;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.jackson.JacksonMcpJsonMapper;
@@ -21,9 +22,14 @@ import java.util.function.BiFunction;
 public class QueryMcpConfiguration {
     private static final String TOKEN = "bearer";
 
-    @Bean WebMvcStatelessServerTransport queryMcpTransport(ObjectMapper json) {
+    @Bean JacksonMcpJsonMapper queryMcpJsonMapper(ObjectMapper json) {
+        // MCP 能力字段可向前扩展；业务请求仍使用原来的严格 ObjectMapper。
+        return new JacksonMcpJsonMapper(json.copy().disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES));
+    }
+
+    @Bean WebMvcStatelessServerTransport queryMcpTransport(JacksonMcpJsonMapper protocolJson) {
         return WebMvcStatelessServerTransport.builder().messageEndpoint("/mcp")
-                .jsonMapper(new JacksonMcpJsonMapper(json))
+                .jsonMapper(protocolJson)
                 .contextExtractor(request -> {
                     Object token = request.servletRequest().getAttribute(McpAccessFilter.TOKEN_ATTRIBUTE);
                     if (!(token instanceof String value)) throw QueryException.denied();
@@ -32,7 +38,8 @@ public class QueryMcpConfiguration {
     }
 
     @Bean(destroyMethod = "close") McpStatelessSyncServer queryMcpServer(
-            WebMvcStatelessServerTransport transport, QueryService service, ObjectMapper json) {
+            WebMvcStatelessServerTransport transport, QueryService service, ObjectMapper json,
+            JacksonMcpJsonMapper protocolJson) {
         var queryProperties = Map.<String, Object>of(
                 "domain", Map.of("type", "string", "enum", List.of("time")),
                 "schemaVersion", Map.of("type", "string", "enum", List.of(QueryProperties.RELEASE)),
@@ -42,7 +49,7 @@ public class QueryMcpConfiguration {
                 "variables", Map.of("type", "object"));
         var required = List.of("domain", "schemaVersion", "policyVersion", "operationName", "query");
         return McpServer.sync(transport).serverInfo("aio-life-query", "0.1.0")
-                .jsonMapper(new JacksonMcpJsonMapper(json))
+                .jsonMapper(protocolJson)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
                 .instructions("先读取 time_record 结构，再预检并执行受限只读 GraphQL。身份只由 HTTP Bearer 凭据确定。")
                 .tools(List.of(
