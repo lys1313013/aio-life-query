@@ -89,7 +89,7 @@ def build(connector_url, connector_key):
     objects = [obj('DataConnectorLink', {'name':'mysql', 'url':{'singleUrl':{'value':connector_url}},
         'headers':{'Authorization':{'value':'Bearer '+connector_key}}, 'schema':{'version':'v0.1','schema':schema,
         'capabilities':{'version':'0.1.6','capabilities':{'query':{'aggregates':{},'variables':{}}, 'mutation':{},
-        'relationships':{'relation_comparisons':{},'order_by_aggregate':{}}}}})]
+        'relationships':{'relation_comparisons':{},'order_by_aggregate':{}}}}}})]
     for name in ['BigInt','BigDecimal']:
         objects.append(obj('ScalarType', {'name':name,'graphql':{'typeName':name}}))
     for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT8','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal')]:

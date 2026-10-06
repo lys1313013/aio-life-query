@@ -46,7 +46,7 @@ public class QueryService {
             }
             available.add(describe(dataset));
         }
-        audit.write(UUID.randomUUID().toString(), user, "CATALOG_READ", null, 0);
+        audit.write(UUID.randomUUID().toString(), user, "CATALOG_READ", null, 0, "catalog");
         return available;
     }
 

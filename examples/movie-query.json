@@ -1,0 +1,11 @@
+{
+  "domain": "movie",
+  "schemaVersion": "movie-v1",
+  "policyVersion": "movie-v1",
+  "operationName": "Movies",
+  "query": "query Movies($start:String!,$end:String!){movies(where:{createdAt:{_gte:$start,_lt:$end}},limit:100){id title type status totalProgress currentProgress rating startTime finishTime}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  }
+}

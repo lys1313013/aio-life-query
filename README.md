@@ -1,6 +1,6 @@
-# AIO Life Query — 首期时迹查询
+# AIO Life Query — 生活数据只读查询
 
-独立 Java 21 / Spring Boot 服务。AI 先读取授权目录，再提交受限 GraphQL；Hasura v3 将查询转换到 MySQL。首期只发布 `time_record`，提供 REST 和 MCP 入口；不提供原始 SQL、写入、关联表或大模型调用。
+独立 Java 21 / Spring Boot 服务。AI 先读取授权目录，再提交受限 GraphQL；Hasura v3 将查询转换到 MySQL。目前发布时迹、运动、阅读、影视、视频和演出六个数据集，提供 REST 和 MCP 入口；不提供原始 SQL、写入、关联表或大模型调用。
 
 这是独立本地 Git 仓库，尚未创建远程仓库。配套授权接口位于相邻 `aio-life-server` 仓库的 `top.aiolife.sso.query`。
 
@@ -22,7 +22,7 @@ sequenceDiagram
     U->>Q: REST / MCP + AIO Life Token 或 API Key
     Q->>L: check-token：服务密钥 + 原 Bearer
     L->>L: 现有 Sa-Token / API Key 认证、账号、二级锁
-    L-->>Q: 可信 userId + 固定 time.read 权限
+    L-->>Q: 可信 userId + 对应数据集的只读权限
     Q->>Q: AST 校验、限流、审计、一次性执行票据
     Q->>H: 规范化 GraphQL + 内部票据
     H->>Q: 带独立密钥的认证 Webhook
@@ -36,11 +36,11 @@ sequenceDiagram
 ```
 
 - 用户使用现有 AIO Life 登录 Token 或 API Key；REST 和 MCP 均从 `Authorization: Bearer ...` 读取，不能从工具参数指定身份或角色。公网入口拒绝 `X-Hasura-*`。
-- 每次请求直接调用 AIO Life 的内部 `check-token`，网关不解析 JWT、不共享 AIO Life Redis、不缓存认证结果。接口经过原有 Sa-Token / API Key 拦截器，并且必须提供独立服务密钥；固定应用 `aio-life-query`、角色 `ai_time_reader`、范围 `time.read`。没有新增逐应用用户授权记录；当前查询能力由功能开关、有效凭据和二级锁共同控制。
-- AIO Life 同时检查 `/mcp/tools`、`/time/time-tracker`、`/time/dashboard` 的二级锁；会话退出、账号删除、API Key 删除/过期和重新锁定均影响后续执行。默认关闭整个查询授权功能。
+- 每次请求直接调用 AIO Life 的内部 `check-token`，网关不解析 JWT、不共享 AIO Life Redis、不缓存认证结果。授权客户端兼容后端旧版字符串 `rscode` 和新版数字 `code`，同时出现且不一致时拒绝。接口经过原有 Sa-Token / API Key 拦截器，并且必须提供独立服务密钥；固定应用 `aio-life-query`，按数据集返回固定角色和读取范围（时迹仍为 `ai_time_reader` / `time.read`）。目录发现使用 `ai_query_catalog` / `query.catalog`，不授予 Hasura 数据读取权限。没有新增逐应用用户授权记录；当前查询能力由功能开关、有效凭据和二级锁共同控制。
+- AIO Life 检查 `/mcp/tools` 和对应业务菜单的二级锁；时迹仍检查 `/time/time-tracker`、`/time/dashboard`，其他数据集分别检查 `/record/exercise`、`/record/read`、`/record/movie`、`/record/videoWatch`、`/record/performance`。锁定的数据集不出现在目录中，直接描述或执行同样拒绝；会话退出、账号删除、API Key 删除/过期和重新锁定均影响后续执行。默认关闭整个查询授权功能。
 - 明细与聚合共用 Hasura 行权限，均剔除其他用户和逻辑删除记录。`userId` / `isDeleted` 不出现在对外目录，网关也不接受它们作为输入。
-- MySQL 账号只授予 6 个必要列的 SELECT；敏感标题、描述在数据库权限层也不可读。Connector 禁用 mutation、explain、请求级连接地址覆盖，保留单一配置数据源。
-- Redis 票据仅保留最多 30 秒、原子消费一次。票据中保存原始 AIO Life Token / API Key，供 Webhook 实时复核，必须使用专用私有 Redis；不要向客户端开放 Redis 或 Hasura/Connector 端口。
+- MySQL 账号只授予六个数据集白名单列的 SELECT（见 `deploy/readonly-account.sql.example`）；时迹标题/描述、视频笔记、演出座位/订单号等未发布字段在数据库权限层也不可读。Connector 禁用 mutation、explain、请求级连接地址覆盖，保留单一配置数据源。
+- Redis 票据绑定数据集及其版本，仅保留最多 30 秒、原子消费一次；Webhook 复核相同业务并只返回该数据集角色，不能用运动票据访问其他表。票据中保存原始 AIO Life Token / API Key，供 Webhook 实时复核，必须使用专用私有 Redis；不要向客户端开放 Redis 或 Hasura/Connector 端口。
 - 没有结果缓存；依赖或审计失败不返回成功，不返回 Hasura 的部分数据。单次调用使用固定发布版本，返回前再检查。
 
 ## 对外接口
@@ -50,7 +50,7 @@ sequenceDiagram
 | AIO Life（内部） | `POST /api/internal/query/access/check-token` | 现有 Token / API Key 实时检查 |
 | aio-life-query | `POST /mcp` | MCP Streamable HTTP，无持久会话 |
 | aio-life-query | `GET /api/v1/datasets` | 读取当前可用目录 |
-| aio-life-query | `GET /api/v1/datasets/time_record` | SDL、字段语义和限制 |
+| aio-life-query | `GET /api/v1/datasets/{name}` | SDL、字段语义和限制 |
 | aio-life-query | `POST /api/v1/queries/validate` | 校验查询，不能代替执行时授权 |
 | aio-life-query | `POST /api/v1/queries/execute` | 同步执行 |
 
@@ -73,12 +73,12 @@ curl "$AIO_QUERY_URL/api/v1/queries/execute" \
 
 ### MCP
 
-使用官方 Java SDK `0.14.0` 的无会话 WebMVC Streamable HTTP 传输，与现有 AIO Life SDK 版本一致。入口为 `https://<query-host>/mcp`；经验证的初始化协议为 `2025-06-18`。GET 不提供 SSE 常驻连接，HTTP POST 返回 JSON-RPC，通知返回 202。无 OAuth 登录跳转；客户端必须支持自定义 Bearer 请求头。每个 HTTP 请求（包括 initialize、tools/list）重新认证，不把 session id 当成身份。
+使用官方 Java SDK `0.14.0` 的无会话 WebMVC Streamable HTTP 传输，与现有 AIO Life SDK 版本一致。入口为 `https://<query-host>/mcp`；经验证的初始化协议为 `2025-06-18`。服务端允许直接调用 `tools/list` / `tools/call`，无需先调用 `initialize`；保留初始化接口兼容旧客户端。这不代表已升级到 MCP `2026-07-28`。GET 不提供 SSE 常驻连接，HTTP POST 返回 JSON-RPC，通知返回 202。无 OAuth 登录跳转；客户端必须支持自定义 Bearer 请求头。每个 HTTP 请求（包括 initialize、tools/list）重新认证，不把 session id 当成身份。
 
 | 工具 | 参数 / 用途 |
 |---|---|
 | `aio_query_list_datasets` | `{}`，发现已发布数据集 |
-| `aio_query_describe_dataset` | `{"name":"time_record"}`，读取 SDL、字段语义及版本 |
+| `aio_query_describe_dataset` | `{"name":"time_record"}`（或下表其他数据集名），读取 SDL、字段语义及版本 |
 | `aio_query_validate` | 与 REST 查询请求相同，预检受限 GraphQL |
 | `aio_query_execute` | 与 REST 查询请求相同，执行当前用户的明细或汇总 |
 
@@ -114,9 +114,35 @@ curl "$AIO_QUERY_URL/mcp" \
 
 旧的签发/撤销及 `/api/internal/query/access/evaluate` 接口保留；当前网关默认仅使用直接校验接口，旧 `aqt_` 凭据不能用于此网关入口。
 
-`timeRecords` 输出 `id`、`date`、`categoryId`、`durationMinutes`，时长单位为分钟。ID 始终是字符串。`timeRecordStats` 支持 `count`、`durationMinutes { sum }`，统计值输出十进制字符串；空集 sum 为 null。
+## 已发布数据集
 
-查询文档只允许一个具名 query、一个根字段；支持别名、变量、已发布筛选和排序。拒绝片段、指令、内省、关系、逻辑 OR、mutation 和 subscription。日期必须为 `_gte` / `_lt` 半开区间，最大 93 天，汇总同样受限。
+`domain`、`schemaVersion`、`policyVersion` 必须与目录匹配；版本不一致返回 `SCHEMA_CHANGED`。五个新数据集沿用相同 MCP 工具，不增加按业务命名的工具。
+
+| 数据集 | domain | schemaVersion / policyVersion | 明细 / 汇总根字段 | 可用于限定日期范围的字段 |
+|---|---|---|---|---|
+| `time_record` | `time` | `time-record-v1` | `timeRecords` / `timeRecordStats` | `date` |
+| `exercise_record` | `exercise` | `exercise-record-v1` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
+| `read_record` | `reading` | `read-record-v1` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
+| `movie` | `movie` | `movie-v1` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
+| `b_video` | `video` | `b-video-v1` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
+| `performance` | `performance` | `performance-v1` | `performances` / `performanceStats` | `performanceDate` |
+
+至少一个范围字段必须提供 `_gte` / `_lt` 半开区间，最大 93 天；日期接受 `YYYY-MM-DD`，DATETIME 字段也接受无时区的 `YYYY-MM-DDTHH:mm:ss`（按数据库本地时间比较）。范围筛选不会自动限制其他时间字段；按 `finishTime` 查询可找到以前创建、近期完成的阅读/影视记录，按 `createdAt` 可包含尚未开始的收藏。目录返回 `rangeFields` 和该数据集完整 SDL。
+
+| 数据集 | 公开字段（除 id） | 汇总 |
+|---|---|---|
+| 时迹 | `date`、`categoryId`、`durationMinutes` | `count`、`durationMinutes { sum }` |
+| 运动 | `exerciseDate`、`exerciseTypeId`、`exerciseCount` | `count`、`exerciseCount { sum }` |
+| 阅读 | `title`、`type`、`author`、`url`、`status`、`totalProgress`、`currentProgress`、`startTime`、`finishTime`、`createdAt` | `count` |
+| 影视 | `title`、`type`、`director`、`url`、`status`、`totalProgress`、`currentProgress`、`startTime`、`finishTime`、`rating`、`createdAt` | `count` |
+| 视频 | `title`、`url`、`bvid`、`ownerName`、`durationSeconds`、`watchedDurationSeconds`、`episodes`、`currentEpisode`、`status`、`lastWatched`、`createdAt` | `count`、`durationSeconds { sum }`、`watchedDurationSeconds { sum }` |
+| 演出 | `performanceName`、`performer`、`performanceType`、`performanceDate`、`city`、`venue`、`ticketPrice`、`durationMinutes`、`rating` | `count`、`ticketPrice { sum }`、`durationMinutes { sum }` |
+
+运动 `count` 表示记录条数，不代表运动天数；`exerciseCount` 为对应运动类型的数量，不同类型应分别筛选分析。按日/周/月改变范围可分析趋势，当前不提供服务端 `groupBy`。视频时长单位为秒，时迹/演出时长为分钟，演出票价为元。所有 ID、`ticketPrice`、汇总数值返回十进制字符串（时迹的字符串记录 ID 原样保留）；空集 `sum` 为 null。
+
+查询文档只允许一个具名 query、一个根字段；支持别名、变量、已发布筛选和排序。ID/文本支持 `_eq`；整数和金额支持 `_eq` / `_gte` / `_lte`，金额筛选值使用精确十进制字符串；状态为 `not_started` / `in_progress` / `completed` / `on_hold`。拒绝片段、指令、内省、关系、逻辑 OR、mutation 和 subscription。
+
+调用示例位于 `examples/`：`exercise-record-stats.json`、`read-record-query.json`、`movie-query.json`、`b-video-query.json`、`performance-stats.json`。REST 直接提交示例；MCP 将同一 JSON 放入 `tools/call.params.arguments`，工具名为 `aio_query_validate` 或 `aio_query_execute`。
 
 | 项目 | 首期固定限制 |
 |---|---|
@@ -155,7 +181,7 @@ bash scripts/test_e2e.sh
 
 ## 独立部署
 
-1. 在目标数据库按 `deploy/readonly-account.sql.example` 创建运行账号。核对实际 `time_record` 的 6 个字段及数据类型；检查 `(user_id,is_deleted,date,id)` 查询计划并按现有迁移流程补索引。不要让查询服务自动迁移业务表。
+1. 在目标数据库按 `deploy/readonly-account.sql.example` 创建运行账号。核对六个数据集白名单字段及数据类型，演出必须已完成 `performance.user_id` 的结构与归属回填；检查 `(user_id,is_deleted,date,id)` 查询计划并按现有迁移流程补索引。不要让查询服务自动迁移业务表。
 2. AIO Life 配置 `AIO_LIFE_QUERY_ACCESS_ENABLED=true`、随机 `AIO_LIFE_QUERY_ACCESS_SERVICE_KEY`（至少 32 字符）；`AIO_LIFE_QUERY_ACCESS_ALLOWED_APPS` 默认 `aio-life-query`。直接模式复用原身份体系，无需新增业务表或签发第二个 Token。
 3. 网关设置相同 `AIO_QUERY_SERVICE_KEY`、另一把随机 `AIO_QUERY_WEBHOOK_KEY`、独立 `AIO_QUERY_CONNECTOR_KEY`、`AIO_QUERY_ACCESS_URL`、`AIO_QUERY_REDIS_PASSWORD`。三把服务密钥均至少 32 字符。`AIO_QUERY_JDBC_URL` 使用只读账号，生产配置 MySQL TLS；凭据由部署平台注入，不提交 `.env`。
 4. `export AIO_QUERY_CONFIG_GID="$(id -g)"`，执行 `python3 scripts/build_metadata.py`，生成权限固定的本地 OpenDD / AuthConfig / Connector 配置。输出含 Webhook 和 Connector 密钥，目录权限 `0750`、文件 `0640`；密钥先写入 `0600` 临时文件，完整写入后原子替换，失败时保留该文件的原版本并清理临时文件。运行容器通过附加组读取，该组只应包含可信部署账号；拒绝符号链接输出目录。不要导入全库表结构。
@@ -171,4 +197,4 @@ bash scripts/test_e2e.sh
 
 选定 Connector 的归档未提供许可证，GitHub API 的 license 为 null；其生产使用与再分发授权尚未核实。更换 jOOQ 依赖不能解决整个仓库的许可问题，具体证据和发布边界见 [connector/UPSTREAM.md](connector/UPSTREAM.md)。
 
-本期尚未提供授权管理 UI、长期应用授权、自动轮换、多表关系和可观测性平台接入；这些不影响 REST 单表调用，但属于后续需求。
+本期尚未提供授权管理 UI、长期应用授权、自动轮换、多表关系和可观测性平台接入；这些不影响 REST 单数据集调用，但属于后续需求。

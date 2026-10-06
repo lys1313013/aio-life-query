@@ -1,0 +1,11 @@
+{
+  "domain": "performance",
+  "schemaVersion": "performance-v1",
+  "policyVersion": "performance-v1",
+  "operationName": "PerformanceSummary",
+  "query": "query PerformanceSummary($start:String!,$end:String!){performanceStats(where:{performanceDate:{_gte:$start,_lt:$end}}){count ticketPrice{sum} durationMinutes{sum}}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "domain": "video",
+  "schemaVersion": "b-video-v1",
+  "policyVersion": "b-video-v1",
+  "operationName": "Videos",
+  "query": "query Videos($start:String!,$end:String!){bVideos(where:{createdAt:{_gte:$start,_lt:$end}},limit:100){id title status durationSeconds watchedDurationSeconds episodes currentEpisode lastWatched}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  }
+}

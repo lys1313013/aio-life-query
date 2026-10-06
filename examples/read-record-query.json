@@ -1,0 +1,11 @@
+{
+  "domain": "reading",
+  "schemaVersion": "read-record-v1",
+  "policyVersion": "read-record-v1",
+  "operationName": "CompletedReading",
+  "query": "query CompletedReading($start:String!,$end:String!){readRecords(where:{finishTime:{_gte:$start,_lt:$end},status:{_eq:\"completed\"}},limit:100){id title type author status totalProgress currentProgress startTime finishTime}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  }
+}

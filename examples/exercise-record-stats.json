@@ -1,0 +1,11 @@
+{
+  "domain": "exercise",
+  "schemaVersion": "exercise-record-v1",
+  "policyVersion": "exercise-record-v1",
+  "operationName": "ExerciseSummary",
+  "query": "query ExerciseSummary($start:String!,$end:String!){exerciseRecordStats(where:{exerciseDate:{_gte:$start,_lt:$end}}){count exerciseCount{sum}}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  }
+}

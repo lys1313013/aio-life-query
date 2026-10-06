@@ -34,7 +34,7 @@ public class QueryAudit {
             Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
             var record = new LinkedHashMap<String, Object>();
             record.put("timestamp", Instant.now().toString()); record.put("queryId", id);
-            record.put("event", event); record.put("releaseId", QueryDatasets.named(dataset).release());
+            record.put("event", event); record.put("releaseId", "catalog".equals(dataset) ? "catalog-v1" : QueryDatasets.named(dataset).release());
             record.put("dataset", dataset);
             if (access != null) {
                 record.put("userId", access.userId()); record.put("appId", access.appId());
