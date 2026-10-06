@@ -1,0 +1,474 @@
+[
+  {
+    "name": "time_record",
+    "domain": "time",
+    "typeName": "TimeRecord",
+    "root": "timeRecords",
+    "statsRoot": "timeRecordStats",
+    "release": "time-record-v1",
+    "role": "ai_time_reader",
+    "scope": "time.read",
+    "description": "当前用户未删除的时迹；durationMinutes 单位为分钟",
+    "rangeFields": [
+      "date"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "date": {
+        "column": "date",
+        "kind": "DATE",
+        "sqlType": "DATE",
+        "nullable": false
+      },
+      "categoryId": {
+        "column": "category_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "durationMinutes": {
+        "column": "duration",
+        "kind": "INT",
+        "sqlType": "SMALLINT UNSIGNED",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [
+      "durationMinutes"
+    ],
+    "orderFields": [
+      "id",
+      "date",
+      "durationMinutes"
+    ]
+  },
+  {
+    "name": "exercise_record",
+    "domain": "exercise",
+    "typeName": "ExerciseRecord",
+    "root": "exerciseRecords",
+    "statsRoot": "exerciseRecordStats",
+    "release": "exercise-record-v1",
+    "role": "ai_exercise_reader",
+    "scope": "exercise.read",
+    "description": "运动记录；exerciseCount 为对应运动类型的记录数量，count 为记录条数",
+    "rangeFields": [
+      "exerciseDate"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "exerciseDate": {
+        "column": "exercise_date",
+        "kind": "DATE",
+        "sqlType": "DATE",
+        "nullable": false
+      },
+      "exerciseTypeId": {
+        "column": "exercise_type_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "exerciseCount": {
+        "column": "exercise_count",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [
+      "exerciseCount"
+    ],
+    "orderFields": [
+      "id",
+      "exerciseDate",
+      "exerciseCount"
+    ]
+  },
+  {
+    "name": "read_record",
+    "domain": "reading",
+    "typeName": "ReadRecord",
+    "root": "readRecords",
+    "statsRoot": "readRecordStats",
+    "release": "read-record-v1",
+    "role": "ai_reading_reader",
+    "scope": "reading.read",
+    "description": "阅读书籍/文章、进度及完成情况；可按创建、开始或完成时间限定范围",
+    "rangeFields": [
+      "createdAt",
+      "startTime",
+      "finishTime"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "title": {
+        "column": "title",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "type": {
+        "column": "type",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": false
+      },
+      "author": {
+        "column": "author",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "url": {
+        "column": "url",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "status": {
+        "column": "status",
+        "kind": "STATUS",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "totalProgress": {
+        "column": "total_progress",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "currentProgress": {
+        "column": "current_progress",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "startTime": {
+        "column": "start_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": true
+      },
+      "finishTime": {
+        "column": "finish_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": true
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [],
+    "orderFields": [
+      "id",
+      "createdAt",
+      "startTime",
+      "finishTime",
+      "currentProgress"
+    ]
+  },
+  {
+    "name": "movie",
+    "domain": "movie",
+    "typeName": "Movie",
+    "root": "movies",
+    "statsRoot": "movieStats",
+    "release": "movie-v1",
+    "role": "ai_movie_reader",
+    "scope": "movie.read",
+    "description": "影视观看状态、进度、个人评分；可按创建、开始或完成时间限定范围",
+    "rangeFields": [
+      "createdAt",
+      "startTime",
+      "finishTime"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "title": {
+        "column": "title",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "type": {
+        "column": "type",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": false
+      },
+      "director": {
+        "column": "director",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "url": {
+        "column": "url",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "status": {
+        "column": "status",
+        "kind": "STATUS",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "totalProgress": {
+        "column": "total_progress",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "currentProgress": {
+        "column": "current_progress",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "startTime": {
+        "column": "start_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": true
+      },
+      "finishTime": {
+        "column": "finish_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": true
+      },
+      "rating": {
+        "column": "rating",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [],
+    "orderFields": [
+      "id",
+      "createdAt",
+      "startTime",
+      "finishTime",
+      "rating"
+    ]
+  },
+  {
+    "name": "b_video",
+    "domain": "video",
+    "typeName": "BVideo",
+    "root": "bVideos",
+    "statsRoot": "bVideoStats",
+    "release": "b-video-v1",
+    "role": "ai_video_reader",
+    "scope": "video.read",
+    "description": "收藏视频、观看状态和进度；durationSeconds / watchedDurationSeconds 单位为秒",
+    "rangeFields": [
+      "createdAt",
+      "lastWatched"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "title": {
+        "column": "title",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "url": {
+        "column": "url",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "bvid": {
+        "column": "bvid",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "ownerName": {
+        "column": "owner_name",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "durationSeconds": {
+        "column": "duration",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": false
+      },
+      "watchedDurationSeconds": {
+        "column": "watched_duration",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": false
+      },
+      "episodes": {
+        "column": "episodes",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "currentEpisode": {
+        "column": "current_episode",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "status": {
+        "column": "status",
+        "kind": "STATUS",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "lastWatched": {
+        "column": "last_watched",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": true
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [
+      "durationSeconds",
+      "watchedDurationSeconds"
+    ],
+    "orderFields": [
+      "id",
+      "createdAt",
+      "lastWatched",
+      "durationSeconds",
+      "watchedDurationSeconds"
+    ]
+  },
+  {
+    "name": "performance",
+    "domain": "performance",
+    "typeName": "Performance",
+    "root": "performances",
+    "statsRoot": "performanceStats",
+    "release": "performance-v1",
+    "role": "ai_performance_reader",
+    "scope": "performance.read",
+    "description": "演出、日期、票价与评分；ticketPrice 为元，durationMinutes 为分钟；不开放座位和订单号",
+    "rangeFields": [
+      "performanceDate"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "performanceName": {
+        "column": "performance_name",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "performer": {
+        "column": "performer",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "performanceType": {
+        "column": "performance_type",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "performanceDate": {
+        "column": "performance_date",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "city": {
+        "column": "city",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "venue": {
+        "column": "venue",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "ticketPrice": {
+        "column": "ticket_price",
+        "kind": "DECIMAL",
+        "sqlType": "DECIMAL",
+        "nullable": false
+      },
+      "durationMinutes": {
+        "column": "duration",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
+      },
+      "rating": {
+        "column": "rating",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
+      }
+    },
+    "aggregateFields": [
+      "ticketPrice",
+      "durationMinutes"
+    ],
+    "orderFields": [
+      "id",
+      "performanceDate",
+      "ticketPrice",
+      "rating"
+    ]
+  }
+]

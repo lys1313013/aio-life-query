@@ -31,7 +31,7 @@ public class ExecutionStore {
             """, Long.class);
 
     public ExecutionStore(StringRedisTemplate redis, ObjectMapper json) { this.redis = redis; this.json = json; }
-    record Ticket(String token, AccessClient.Access access, String queryId, String operationHash, String release, long expiresAt) {}
+    record Ticket(String token, AccessClient.Access access, String queryId, String operationHash, String release, long expiresAt, String dataset) {}
 
     public void rate(String userId) {
         Long count = redis.execute(RATE, List.of("aioQuery:rate:v1:" + userId));
@@ -60,7 +60,7 @@ public class ExecutionStore {
         String ticket = "aqe_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         long expires = Math.min(access.expiresAt(), Instant.now().getEpochSecond() + 30);
         try {
-            Ticket value = new Ticket(token, access, queryId, hash(json.writeValueAsString(plan)), QueryProperties.RELEASE, expires);
+            Ticket value = new Ticket(token, access, queryId, hash(json.writeValueAsString(plan)), QueryDatasets.named(plan.dataset()).release(), expires, plan.dataset());
             if (!Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key(ticket), json.writeValueAsString(value),
                     Duration.ofSeconds(Math.max(1, expires - Instant.now().getEpochSecond()))))) throw QueryException.denied();
             return ticket;
@@ -74,7 +74,7 @@ public class ExecutionStore {
         if (raw == null) throw QueryException.denied();
         try {
             Ticket value = json.readValue(raw, Ticket.class);
-            if (!QueryProperties.RELEASE.equals(value.release()) || value.expiresAt() <= Instant.now().getEpochSecond()) throw QueryException.denied();
+            if (!QueryDatasets.named(value.dataset()).release().equals(value.release()) || value.expiresAt() <= Instant.now().getEpochSecond()) throw QueryException.denied();
             return value;
         } catch (Exception e) { throw QueryException.denied(); }
     }

@@ -2,5 +2,16 @@
 CREATE USER 'aio_query_read'@'CONNECTOR_HOST' IDENTIFIED BY 'REPLACE_WITH_RANDOM_PASSWORD';
 GRANT SELECT (id, date, category_id, duration, user_id, is_deleted)
   ON aio_life.time_record TO 'aio_query_read'@'CONNECTOR_HOST';
+GRANT SELECT (id, exercise_date, exercise_type_id, exercise_count, user_id, is_deleted)
+  ON aio_life.exercise_record TO 'aio_query_read'@'CONNECTOR_HOST';
+GRANT SELECT (id, title, type, author, url, status, total_progress, current_progress, start_time, finish_time, create_time, user_id, is_deleted)
+  ON aio_life.read_record TO 'aio_query_read'@'CONNECTOR_HOST';
+GRANT SELECT (id, title, type, director, url, status, total_progress, current_progress, start_time, finish_time, rating, create_time, user_id, is_deleted)
+  ON aio_life.movie TO 'aio_query_read'@'CONNECTOR_HOST';
+GRANT SELECT (id, title, url, bvid, owner_name, duration, watched_duration, episodes, current_episode, status, last_watched, create_time, user_id, is_deleted)
+  ON aio_life.b_video TO 'aio_query_read'@'CONNECTOR_HOST';
+GRANT SELECT (id, performance_name, performer, performance_type, performance_date, city, venue, ticket_price, duration, rating, user_id, is_deleted)
+  ON aio_life.performance TO 'aio_query_read'@'CONNECTOR_HOST';
+-- 存量数据库请先核对结构，尤其 performance.user_id 的迁移。
 -- 可选索引需先核对现有迁移与 EXPLAIN，不能由服务启动时自动创建：
 -- CREATE INDEX idx_query_time_owner_date ON time_record(user_id, is_deleted, date, id);

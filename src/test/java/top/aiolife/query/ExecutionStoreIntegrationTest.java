@@ -31,7 +31,7 @@ class ExecutionStoreIntegrationTest {
 
     @Test void ticketIsSingleUseAndExpiredAuthorityFailsClosed() {
         var json = new ObjectMapper();
-        var plan = new QueryCompiler.Plan("query fixture", json.createObjectNode(), "timeRecords", "timeRecords", Map.of("id", "id"), 1);
+        var plan = new QueryCompiler.Plan("query fixture", json.createObjectNode(), "timeRecords", "timeRecords", Map.of("id", "id"), 1, "time_record");
         var access = new AccessClient.Access(userId, "aio-life-query", "fixture", "login", Instant.now().getEpochSecond() + 60);
         String ticket = store.issue("fixture-authority", access, "fixture", plan);
         assertEquals(access, store.consume(ticket).access());

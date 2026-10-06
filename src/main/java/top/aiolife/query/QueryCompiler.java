@@ -27,12 +27,12 @@ import graphql.schema.idl.RuntimeWiring;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
 import graphql.validation.Validator;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
+import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -44,28 +44,30 @@ import java.util.Set;
 @Component
 public class QueryCompiler {
     private final ObjectMapper json;
-    private final GraphQLSchema schema;
-    private final String sdl;
+    private final Map<String, GraphQLSchema> schemas = new HashMap<>();
     public record Request(String domain, String schemaVersion, String policyVersion,
                           String operationName, String query, ObjectNode variables) {}
     public record Plan(String query, ObjectNode variables, String responseKey, String root,
-                       Map<String, String> selectedFields, int limit) {}
+                       Map<String, String> selectedFields, int limit, String dataset) {}
 
     public QueryCompiler(ObjectMapper json) throws Exception {
         this.json = json;
-        sdl = new ClassPathResource("time-record.graphqls").getContentAsString(StandardCharsets.UTF_8);
-        schema = new SchemaGenerator().makeExecutableSchema(new SchemaParser().parse(sdl), RuntimeWiring.newRuntimeWiring().build());
+        for (var dataset : QueryDatasets.all()) {
+            schemas.put(dataset.name(), new SchemaGenerator().makeExecutableSchema(
+                    new SchemaParser().parse(dataset.sdl()), RuntimeWiring.newRuntimeWiring().build()));
+        }
         ParserOptions.setDefaultParserOptions(ParserOptions.newParserOptions().maxCharacters(32768)
                 .maxTokens(2000).maxWhitespaceTokens(4000).maxRuleDepth(32).build());
     }
 
-    public String sdl() { return sdl; }
+    public String sdl() { return QueryDatasets.named("time_record").sdl(); }
 
     public Plan compile(Request request) {
-        if (request == null || !"time".equals(request.domain()) || request.query() == null
+        if (request == null || request.query() == null
                 || request.query().getBytes(StandardCharsets.UTF_8).length > 32768) throw QueryException.invalid();
-        if (!QueryProperties.RELEASE.equals(request.schemaVersion()) || !QueryProperties.RELEASE.equals(request.policyVersion())) {
-            throw new QueryException("SCHEMA_CHANGED", 409, "请重新获取时迹目录");
+        var dataset = QueryDatasets.domain(request.domain());
+        if (!dataset.release().equals(request.schemaVersion()) || !dataset.release().equals(request.policyVersion())) {
+            throw new QueryException("SCHEMA_CHANGED", 409, "请重新获取数据集目录");
         }
         try {
             Document document = Parser.parse(request.query());
@@ -73,11 +75,11 @@ public class QueryCompiler {
                     || op.getOperation() != OperationDefinition.Operation.QUERY || op.getName() == null
                     || !op.getName().equals(request.operationName()) || !op.getDirectives().isEmpty()) throw QueryException.invalid();
             checkNodes(document, 0, new int[]{0});
-            if (!new Validator().validateDocument(schema, document, Locale.ROOT).isEmpty()) throw QueryException.invalid();
+            if (!new Validator().validateDocument(schemas.get(dataset.name()), document, Locale.ROOT).isEmpty()) throw QueryException.invalid();
             if (op.getSelectionSet().getSelections().size() != 1
                     || !(op.getSelectionSet().getSelections().getFirst() instanceof Field root)) throw QueryException.invalid();
             String name = root.getName();
-            if (!Set.of("timeRecords", "timeRecordStats").contains(name)) throw QueryException.invalid();
+            if (!Set.of(dataset.root(), dataset.statsRoot()).contains(name)) throw QueryException.invalid();
             ObjectNode variables = request.variables() == null ? json.createObjectNode() : request.variables().deepCopy();
             Set<String> declared = new HashSet<>();
             for (var def : op.getVariableDefinitions()) {
@@ -90,22 +92,47 @@ public class QueryCompiler {
                 if (args.put(argument.getName(), value(argument.getValue(), variables)) != null) throw QueryException.invalid();
             }
             JsonNode where = args.get("where");
-            requireObject(where, Set.of("date", "id", "categoryId", "durationMinutes"));
-            JsonNode date = where.get("date"); requireObject(date, Set.of("_gte", "_lt"));
-            LocalDate start = LocalDate.parse(text(date.get("_gte"), 10)), end = LocalDate.parse(text(date.get("_lt"), 10));
-            if (ChronoUnit.DAYS.between(start, end) < 1 || ChronoUnit.DAYS.between(start, end) > 93) throw QueryException.invalid();
-            for (String id : Set.of("id", "categoryId")) {
-                if (where.has(id)) { requireObject(where.get(id), Set.of("_eq")); text(where.get(id).get("_eq"), 64); }
+            requireObject(where, dataset.fields().keySet());
+            boolean bounded = false;
+            for (var entry : dataset.fields().entrySet()) {
+                String fieldName = entry.getKey();
+                if (!where.has(fieldName)) continue;
+                var field = entry.getValue();
+                JsonNode comparison = where.get(fieldName);
+                if (Set.of("DATE", "DATETIME").contains(field.kind())) {
+                    requireObject(comparison, Set.of("_gte", "_lt"));
+                    LocalDateTime start = dateTime(comparison.get("_gte")), end = dateTime(comparison.get("_lt"));
+                    long seconds = java.time.Duration.between(start, end).getSeconds();
+                    if (seconds <= 0 || seconds > 93L * 86400) throw QueryException.invalid();
+                    if ("DATE".equals(field.kind())) {
+                        LocalDate.parse(text(comparison.get("_gte"), 10));
+                        LocalDate.parse(text(comparison.get("_lt"), 10));
+                    } else {
+                        ((ObjectNode) comparison).put("_gte", start.toString()).put("_lt", end.toString());
+                    }
+                    bounded |= dataset.rangeFields().contains(fieldName);
+                } else if ("INT".equals(field.kind())) {
+                    requireObject(comparison, Set.of("_eq", "_gte", "_lte"));
+                    int max = "time_record".equals(dataset.name()) ? 1440 : Integer.MAX_VALUE;
+                    comparison.elements().forEachRemaining(v -> integer(v, 0, max));
+                } else if ("DECIMAL".equals(field.kind())) {
+                    requireObject(comparison, Set.of("_eq", "_gte", "_lte"));
+                    comparison.elements().forEachRemaining(v -> {
+                        var number = new BigDecimal(text(v, 32));
+                        if (number.signum() < 0 || number.scale() > 2 || number.compareTo(new BigDecimal("99999999.99")) > 0) throw QueryException.invalid();
+                    });
+                } else {
+                    requireObject(comparison, Set.of("_eq"));
+                    String literal = text(comparison.get("_eq"), "ID".equals(field.kind()) ? 64 : 1000);
+                    if ("STATUS".equals(field.kind()) && !Set.of("not_started", "in_progress", "completed", "on_hold").contains(literal)) throw QueryException.invalid();
+                }
             }
-            if (where.has("durationMinutes")) {
-                requireObject(where.get("durationMinutes"), Set.of("_eq", "_gte", "_lte"));
-                where.get("durationMinutes").elements().forEachRemaining(v -> integer(v, 0, 1440));
-            }
+            if (!bounded) throw QueryException.invalid();
             ObjectNode normalized = json.createObjectNode().set("where", where);
             int limit = 1;
-            String definitions = "$where: TimeRecordBoolExp!";
+            String definitions = "$where: " + dataset.boolType() + "!";
             String arguments = "where: $where";
-            if ("timeRecords".equals(name)) {
+            if (dataset.root().equals(name)) {
                 limit = args.containsKey("limit") ? integer(args.get("limit"), 1, 1000) : 100;
                 int offset = args.containsKey("offset") ? integer(args.get("offset"), 0, 10000) : 0;
                 ArrayNode order = json.createArrayNode();
@@ -114,17 +141,17 @@ public class QueryCompiler {
                     if (input.isObject()) input = json.createArrayNode().add(input);
                     if (!input.isArray() || input.size() > 3) throw QueryException.invalid();
                     for (var item : input) {
-                        requireObject(item, Set.of("id", "date", "durationMinutes"));
+                        requireObject(item, Set.copyOf(dataset.orderFields()));
                         if (item.size() != 1 || !Set.of("Asc", "Desc").contains(item.elements().next().asText())) throw QueryException.invalid();
                         order.add(item);
                     }
                 }
-                if (order.isEmpty()) order.addObject().put("date", "Desc");
+                if (order.isEmpty()) order.addObject().put(dataset.rangeFields().getFirst(), "Desc");
                 boolean hasId = false;
                 for (var item : order) if (item.has("id")) hasId = true;
                 if (!hasId) order.addObject().put("id", "Asc");
                 normalized.put("limit", limit).put("offset", offset).set("orderBy", order);
-                definitions += ", $limit: Int!, $offset: Int!, $orderBy: [TimeRecordOrderBy!]!";
+                definitions += ", $limit: Int!, $offset: Int!, $orderBy: [" + dataset.orderType() + "!]!";
                 arguments += ", limit: $limit, offset: $offset, orderBy: $orderBy";
             } else {
                 arguments = "filter: {where: $where}";
@@ -140,13 +167,19 @@ public class QueryCompiler {
                     }
                 }
             }
-            if (selected.size() > 4) throw QueryException.invalid();
+            if (selected.size() > dataset.fields().size()) throw QueryException.invalid();
             String key = root.getAlias() == null ? name : root.getAlias();
-            String query = "query AioTimeRecord(" + definitions + ") { " + key + ": " + name + "(" + arguments + ") "
+            String query = "query AioQuery(" + definitions + ") { " + key + ": " + name + "(" + arguments + ") "
                     + AstPrinter.printAst(root.getSelectionSet()) + " }";
-            return new Plan(query, normalized, key, name, Map.copyOf(selected), limit);
+            return new Plan(query, normalized, key, name, Map.copyOf(selected), limit, dataset.name());
         } catch (QueryException e) { throw e; }
         catch (RuntimeException e) { throw QueryException.invalid(); }
+    }
+
+    private LocalDateTime dateTime(JsonNode value) {
+        String text = text(value, 19);
+        if (text.length() == 10) return LocalDate.parse(text).atStartOfDay();
+        return LocalDateTime.parse(text.replace(' ', 'T'));
     }
 
     private void checkNodes(Node<?> node, int depth, int[] count) {

@@ -23,6 +23,10 @@ public class QueryAudit {
     public QueryAudit(QueryProperties properties, ObjectMapper json) { this.properties = properties; this.json = json; }
 
     public synchronized void write(String id, AccessClient.Access access, String event, String fingerprint, int rows) {
+        write(id, access, event, fingerprint, rows, "time_record");
+    }
+
+    public synchronized void write(String id, AccessClient.Access access, String event, String fingerprint, int rows, String dataset) {
         try {
             var directory = properties.auditDirectory();
             Files.createDirectories(directory, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
@@ -30,7 +34,8 @@ public class QueryAudit {
             Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
             var record = new LinkedHashMap<String, Object>();
             record.put("timestamp", Instant.now().toString()); record.put("queryId", id);
-            record.put("event", event); record.put("releaseId", QueryProperties.RELEASE);
+            record.put("event", event); record.put("releaseId", QueryDatasets.named(dataset).release());
+            record.put("dataset", dataset);
             if (access != null) {
                 record.put("userId", access.userId()); record.put("appId", access.appId());
                 record.put("credentialId", access.credentialId()); record.put("credentialType", access.credentialType());

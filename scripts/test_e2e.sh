@@ -40,7 +40,15 @@ docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root <<'
 CREATE USER 'aio_query_read'@'%' IDENTIFIED BY 'fixture-query-read-password';
 GRANT SELECT (id,date,category_id,duration,user_id,is_deleted) ON aio_life.time_record TO 'aio_query_read'@'%';
 SQL
-for rejected in 'SELECT title FROM time_record LIMIT 0' 'UPDATE time_record SET duration=duration WHERE 1=0'; do
+# 仅授予显式发布字段；使用部署示例同一份白名单。
+python3 - "$task_root/deploy/readonly-account.sql.example" <<'PYSQL' > "$test_dir/grants.sql"
+from pathlib import Path
+import sys
+text=Path(sys.argv[1]).read_text()
+print('\n'.join(line.replace("'CONNECTOR_HOST'", "'%'") for line in text.splitlines() if not line.startswith('CREATE USER')))
+PYSQL
+docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root < "$test_dir/grants.sql"
+for rejected in 'SELECT title FROM time_record LIMIT 0' 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT description FROM exercise_record LIMIT 0' 'SELECT remark FROM read_record LIMIT 0' 'SELECT remark FROM movie LIMIT 0' 'SELECT notes FROM b_video LIMIT 0' 'SELECT order_number FROM performance LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
   if docker exec "$test_name-mysql" mysql -uaio_query_read -pfixture-query-read-password aio_life -e "$rejected" >/dev/null 2>&1; then
     echo '只读列权限验证失败'; exit 1
   fi
@@ -79,4 +87,4 @@ export AIO_LIFE_REDIS_HOST=127.0.0.1 AIO_LIFE_REDIS_PORT="$redis_port" AIO_LIFE_
   -Dspring.datasource.username=root -Dspring.datasource.password=aio-life-query-fixture-root -Dspring.data.redis.host=127.0.0.1 \
   -Dspring.data.redis.port="$redis_port" -Dspring.data.redis.password= test)
 docker logs "$test_name-hasura" > "$test_dir/hasura.log" 2>&1
-echo '单表端到端测试完成；隔离容器会自动清理。'
+echo '六数据集端到端测试完成；隔离容器会自动清理。'

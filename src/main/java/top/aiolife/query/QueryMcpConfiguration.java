@@ -41,9 +41,9 @@ public class QueryMcpConfiguration {
             WebMvcStatelessServerTransport transport, QueryService service, ObjectMapper json,
             JacksonMcpJsonMapper protocolJson) {
         var queryProperties = Map.<String, Object>of(
-                "domain", Map.of("type", "string", "enum", List.of("time")),
-                "schemaVersion", Map.of("type", "string", "enum", List.of(QueryProperties.RELEASE)),
-                "policyVersion", Map.of("type", "string", "enum", List.of(QueryProperties.RELEASE)),
+                "domain", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::domain).toList()),
+                "schemaVersion", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::release).toList()),
+                "policyVersion", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::release).toList()),
                 "operationName", Map.of("type", "string", "minLength", 1),
                 "query", Map.of("type", "string", "minLength", 1, "maxLength", 32768),
                 "variables", Map.of("type", "object"));
@@ -51,16 +51,16 @@ public class QueryMcpConfiguration {
         return McpServer.sync(transport).serverInfo("aio-life-query", "0.1.0")
                 .jsonMapper(protocolJson)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                .instructions("先读取 time_record 结构，再预检并执行受限只读 GraphQL。身份只由 HTTP Bearer 凭据确定。")
+                .instructions("先读取授权数据集结构，再预检并执行受限只读 GraphQL。身份只由 HTTP Bearer 凭据确定。")
                 .tools(List.of(
                         tool("aio_query_list_datasets", "读取当前用户可用的数据集目录", Map.of(), List.of(), json,
                                 (token, args) -> service.catalog(token, null)),
-                        tool("aio_query_describe_dataset", "读取 time_record 字段、GraphQL SDL、版本和限制",
-                                Map.of("name", Map.of("type", "string", "enum", List.of("time_record"))), List.of("name"), json,
+                        tool("aio_query_describe_dataset", "读取数据集字段、GraphQL SDL、版本和限制",
+                                Map.of("name", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::name).toList())), List.of("name"), json,
                                 (token, args) -> service.catalog(token, (String) args.get("name"))),
-                        tool("aio_query_validate", "预检时迹只读查询；执行时仍重新检查权限", queryProperties, required, json,
+                        tool("aio_query_validate", "预检单数据集只读查询；执行时仍重新检查权限", queryProperties, required, json,
                                 (token, args) -> service.validate(token, request(json, args))),
-                        tool("aio_query_execute", "执行当前用户的时迹明细或汇总查询", queryProperties, required, json,
+                        tool("aio_query_execute", "执行当前用户的生活记录明细或汇总查询", queryProperties, required, json,
                                 (token, args) -> service.execute(token, request(json, args)))))
                 .build();
     }

@@ -17,22 +17,27 @@ public class AccessClient {
         }
     }
 
-    public Access evaluate(String token) {
+    public Access evaluate(String token) { return evaluate(token, "time_record"); }
+
+    public Access evaluate(String token, String dataset) {
+        var definition = "catalog".equals(dataset) ? null : QueryDatasets.named(dataset);
+        String role = definition == null ? "ai_query_catalog" : definition.role();
+        String scope = definition == null ? "query.catalog" : definition.scope();
         if (token == null || token.isEmpty() || token.length() > 4096 || !token.matches("[!-~]+")) {
             throw new QueryException("AUTH_REQUIRED", 401, "需要 AIO Life 登录 Token 或 API Key");
         }
         var response = http.post(properties.accessUrl(), Map.of("X-AIO-Query-Service-Key", properties.serviceKey(),
-                        "Authorization", "Bearer " + token), Map.of("dataset", "time_record"), 16384, 2);
+                        "Authorization", "Bearer " + token), Map.of("dataset", dataset), 16384, 2);
         var body = response.body();
         if (response.status() == 401) throw new QueryException("AUTH_REQUIRED", 401, "AIO Life 凭据已失效");
         if (response.status() >= 500) throw new QueryException("UPSTREAM_UNAVAILABLE", 503, "AIO Life 认证服务不可用");
         if (body != null && "2001".equals(body.path("rscode").asText())) {
-            throw new QueryException("SECONDARY_LOCK_REQUIRED", 403, "请先在 AIO Life 解锁时迹及 AI 工具访问");
+            throw new QueryException("SECONDARY_LOCK_REQUIRED", 403, "请先在 AIO Life 解锁对应业务及 AI 工具访问");
         }
         if (response.status() != 200 || body == null || !"0".equals(body.path("rscode").asText())) throw QueryException.denied();
         var data = body.path("data");
-        if (!"ai_time_reader".equals(data.path("role").asText()) || !data.path("scopes").isArray()
-                || data.path("scopes").size() != 1 || !"time.read".equals(data.path("scopes").get(0).asText())
+        if (!role.equals(data.path("role").asText()) || !data.path("scopes").isArray()
+                || data.path("scopes").size() != 1 || !scope.equals(data.path("scopes").get(0).asText())
                 || !data.path("userId").asText().matches("[0-9]{1,19}")
                 || !"aio-life-query".equals(data.path("appId").asText())
                 || !data.path("credentialId").asText().matches("[a-f0-9]{32}")

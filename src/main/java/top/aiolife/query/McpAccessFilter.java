@@ -42,7 +42,7 @@ public class McpAccessFilter extends OncePerRequestFilter {
             var origin = request.getHeader("Origin");
             if (origin != null && !origins.contains(origin)) throw QueryException.denied();
             String token = QueryController.bearer(request.getHeader("Authorization"));
-            access.evaluate(token);
+            access.evaluate(token, "catalog");
             request.setAttribute(TOKEN_ATTRIBUTE, token);
         } catch (QueryException error) {
             response.setStatus(error.status()); response.setContentType("application/json");
