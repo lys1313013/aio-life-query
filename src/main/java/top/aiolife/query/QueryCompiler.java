@@ -23,6 +23,8 @@ import graphql.language.VariableReference;
 import graphql.parser.Parser;
 import graphql.parser.ParserOptions;
 import graphql.schema.GraphQLSchema;
+import graphql.schema.GraphQLScalarType;
+import graphql.schema.Coercing;
 import graphql.schema.idl.RuntimeWiring;
 import graphql.schema.idl.SchemaGenerator;
 import graphql.schema.idl.SchemaParser;
@@ -47,20 +49,55 @@ public class QueryCompiler {
     private final Map<String, GraphQLSchema> schemas = new HashMap<>();
     public record Request(String domain, String schemaVersion, String policyVersion,
                           String operationName, String query, ObjectNode variables) {}
+    public record GraphqlRequest(String query, String operationName, ObjectNode variables, ObjectNode extensions) {}
     public record Plan(String query, ObjectNode variables, String responseKey, String root,
-                       Map<String, String> selectedFields, int limit, String dataset) {}
+                       Map<String, String> selectedFields, int limit, String dataset,
+                       Map<String, Map<String, String>> relationSelections) {
+        public Plan(String query, ObjectNode variables, String responseKey, String root,
+                    Map<String, String> selectedFields, int limit, String dataset) {
+            this(query, variables, responseKey, root, selectedFields, limit, dataset, Map.of());
+        }
+    }
 
     public QueryCompiler(ObjectMapper json) throws Exception {
         this.json = json;
         for (var dataset : QueryDatasets.all()) {
             schemas.put(dataset.name(), new SchemaGenerator().makeExecutableSchema(
-                    new SchemaParser().parse(dataset.sdl()), RuntimeWiring.newRuntimeWiring().build()));
+                    new SchemaParser().parse(dataset.sdl()), RuntimeWiring.newRuntimeWiring()
+                            // JSON 仅用于输出字段；查询执行和结果校验由 QueryService 负责。
+                            .scalar(GraphQLScalarType.newScalar().name("JSON").coercing(new Coercing<Object, Object>() {
+                                @Override public Object serialize(Object value) { return value; }
+                            }).build()).build()));
         }
         ParserOptions.setDefaultParserOptions(ParserOptions.newParserOptions().maxCharacters(32768)
                 .maxTokens(2000).maxWhitespaceTokens(4000).maxRuleDepth(32).build());
     }
 
     public String sdl() { return QueryDatasets.named("time_record").sdl(); }
+
+    /** HTTP GraphQL 使用当前发布版本，仍交由 compile 校验同一只读子集。 */
+    public Request graphqlRequest(GraphqlRequest request) {
+        if (request == null || request.query() == null
+                || request.query().getBytes(StandardCharsets.UTF_8).length > 32768
+                || (request.extensions() != null && !request.extensions().isEmpty())) throw QueryException.invalid();
+        try {
+            Document document = Parser.parse(request.query());
+            checkNodes(document, 0, new int[]{0});
+            if (document.getDefinitions().size() != 1
+                    || !(document.getDefinitions().getFirst() instanceof OperationDefinition op)
+                    || op.getOperation() != OperationDefinition.Operation.QUERY
+                    || (request.operationName() != null && !request.operationName().equals(op.getName()))
+                    || op.getSelectionSet().getSelections().size() != 1
+                    || !(op.getSelectionSet().getSelections().getFirst() instanceof Field root)) throw QueryException.invalid();
+            var dataset = QueryDatasets.all().stream()
+                    .filter(d -> d.root().equals(root.getName()) || d.statsRoot().equals(root.getName()))
+                    .findFirst().orElseThrow(QueryException::invalid);
+            String name = op.getName() == null ? "AioQuery" : op.getName();
+            String query = AstPrinter.printAst(op.transform(builder -> builder.name(name)));
+            return new Request(dataset.domain(), dataset.release(), dataset.release(), name, query, request.variables());
+        } catch (QueryException error) { throw error; }
+        catch (RuntimeException error) { throw QueryException.invalid(); }
+    }
 
     public Plan compile(Request request) {
         if (request == null || request.query() == null
@@ -92,7 +129,18 @@ public class QueryCompiler {
                 if (args.put(argument.getName(), value(argument.getValue(), variables)) != null) throw QueryException.invalid();
             }
             JsonNode where = args.get("where");
-            requireObject(where, dataset.fields().keySet());
+            Set<String> filters = new HashSet<>(dataset.fields().keySet());
+            filters.addAll(dataset.relations().keySet());
+            requireObject(where, filters);
+            dataset.relations().forEach((key, relation) -> {
+                if (!where.has(key)) return;
+                var condition = where.get(key);
+                requireObject(condition, Set.copyOf(relation.outputFields()));
+                condition.elements().forEachRemaining(comparison -> {
+                    requireObject(comparison, Set.of("_eq"));
+                    text(comparison.get("_eq"), 1000);
+                });
+            });
             boolean bounded = false;
             for (var entry : dataset.fields().entrySet()) {
                 String fieldName = entry.getKey();
@@ -102,8 +150,9 @@ public class QueryCompiler {
                 if (Set.of("DATE", "DATETIME").contains(field.kind())) {
                     requireObject(comparison, Set.of("_gte", "_lt"));
                     LocalDateTime start = dateTime(comparison.get("_gte")), end = dateTime(comparison.get("_lt"));
-                    long seconds = java.time.Duration.between(start, end).getSeconds();
-                    if (seconds <= 0 || seconds > 93L * 86400) throw QueryException.invalid();
+                    var duration = java.time.Duration.between(start, end);
+                    if (duration.isZero() || duration.isNegative()
+                            || duration.compareTo(java.time.Duration.ofDays(QueryProperties.MAX_DATE_RANGE_DAYS)) > 0) throw QueryException.invalid();
                     if ("DATE".equals(field.kind())) {
                         LocalDate.parse(text(comparison.get("_gte"), 10));
                         LocalDate.parse(text(comparison.get("_lt"), 10));
@@ -113,7 +162,8 @@ public class QueryCompiler {
                     bounded |= dataset.rangeFields().contains(fieldName);
                 } else if ("INT".equals(field.kind())) {
                     requireObject(comparison, Set.of("_eq", "_gte", "_lte"));
-                    int max = "time_record".equals(dataset.name()) ? 1440 : Integer.MAX_VALUE;
+                    int max = "time_record".equals(dataset.name()) && Set.of("startTime", "endTime", "durationMinutes").contains(fieldName)
+                            ? 1440 : Integer.MAX_VALUE;
                     comparison.elements().forEachRemaining(v -> integer(v, 0, max));
                 } else if ("DECIMAL".equals(field.kind())) {
                     requireObject(comparison, Set.of("_eq", "_gte", "_lte"));
@@ -157,21 +207,36 @@ public class QueryCompiler {
                 arguments = "filter: {where: $where}";
             }
             Map<String, String> selected = new LinkedHashMap<>();
+            Map<String, Map<String, String>> relationSelections = new LinkedHashMap<>();
             for (var selection : root.getSelectionSet().getSelections()) {
                 if (!(selection instanceof Field field) || field.getName().startsWith("__")) throw QueryException.invalid();
                 String key = field.getAlias() == null ? field.getName() : field.getAlias();
                 if (selected.put(key, field.getName()) != null) throw QueryException.invalid();
                 if (field.getSelectionSet() != null) {
+                    var relation = dataset.root().equals(name) ? dataset.relations().get(field.getName()) : null;
+                    if (relation != null) {
+                        Map<String, String> nestedFields = new LinkedHashMap<>();
+                        for (var nested : field.getSelectionSet().getSelections()) {
+                            if (!(nested instanceof Field nf) || !relation.outputFields().contains(nf.getName())
+                                    || nf.getSelectionSet() != null || !nf.getArguments().isEmpty()) throw QueryException.invalid();
+                            String nestedKey = nf.getAlias() == null ? nf.getName() : nf.getAlias();
+                            if (nestedFields.put(nestedKey, nf.getName()) != null) throw QueryException.invalid();
+                        }
+                        if (nestedFields.isEmpty() || nestedFields.size() > relation.outputFields().size()
+                                || !field.getArguments().isEmpty()) throw QueryException.invalid();
+                        relationSelections.put(key, Map.copyOf(nestedFields));
+                        continue;
+                    }
                     for (var nested : field.getSelectionSet().getSelections()) {
                         if (!(nested instanceof Field nf) || !"sum".equals(nf.getName()) || nf.getAlias() != null) throw QueryException.invalid();
                     }
                 }
             }
-            if (selected.size() > dataset.fields().size()) throw QueryException.invalid();
+            if (selected.size() > dataset.fields().size() + dataset.relations().size()) throw QueryException.invalid();
             String key = root.getAlias() == null ? name : root.getAlias();
             String query = "query AioQuery(" + definitions + ") { " + key + ": " + name + "(" + arguments + ") "
                     + AstPrinter.printAst(root.getSelectionSet()) + " }";
-            return new Plan(query, normalized, key, name, Map.copyOf(selected), limit, dataset.name());
+            return new Plan(query, normalized, key, name, Map.copyOf(selected), limit, dataset.name(), Map.copyOf(relationSelections));
         } catch (QueryException e) { throw e; }
         catch (RuntimeException e) { throw QueryException.invalid(); }
     }

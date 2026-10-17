@@ -55,7 +55,7 @@ public class QueryService {
         output.put("name", dataset.name()); output.put("domain", dataset.domain());
         output.put("description", dataset.description()); output.put("schemaVersion", dataset.release());
         output.put("policyVersion", dataset.release()); output.put("graphqlSdl", dataset.sdl());
-        output.put("maxDateRangeDays", 93); output.put("maxRows", 1000);
+        output.put("maxDateRangeDays", QueryProperties.MAX_DATE_RANGE_DAYS); output.put("maxRows", 1000);
         output.put("rangeFields", dataset.rangeFields()); output.put("queryExample", dataset.example());
         return output;
     }
@@ -75,6 +75,13 @@ public class QueryService {
         return Map.of("allowed", true, "dataset", dataset.name(), "releaseId", dataset.release());
     }
 
+    public Object executeGraphql(String token, QueryCompiler.GraphqlRequest request) {
+        // 仅解析有大小/深度限制的文档以确定数据集；执行前统一完成一次用户鉴权。
+        ObjectNode result = json.valueToTree(execute(token, compiler.graphqlRequest(request)));
+        JsonNode data = result.remove("result");
+        return Map.of("data", data, "extensions", result);
+    }
+
     public Object execute(String token, QueryCompiler.Request request) {
         // 未认证及限流拒绝不能触发同步落盘，避免绕过准入限制消耗审计资源。
         var dataset = QueryDatasets.domain(request.domain());
@@ -87,7 +94,7 @@ public class QueryService {
             QueryCompiler.Plan plan = compiler.compile(request);
             fingerprint = ExecutionStore.hash(plan.query());
             try (var lease = store.acquire(user.userId())) {
-                String ticket = store.issue(token, user, queryId, plan);
+                String ticket = store.issue(user, queryId, plan);
                 BoundedHttp.Response response;
                 try {
                     response = http.post(properties.hasuraUrl(), Map.of("Authorization", "Bearer " + ticket),
@@ -108,8 +115,6 @@ public class QueryService {
                 } else {
                     normalizeStats(result, plan); rows = 1;
                 }
-                var refreshed = authority(token, dataset);
-                if (!user.sameAuthority(refreshed)) throw QueryException.denied();
                 writeAudit(queryId, user, "SUCCEEDED", fingerprint, rows, dataset);
                 ObjectNode output = json.createObjectNode();
                 output.put("queryId", queryId).put("rowCount", rows).put("schemaVersion", dataset.release())
@@ -127,9 +132,8 @@ public class QueryService {
     public Map<String, String> webhook(String ticket) {
         var execution = store.consume(ticket);
         var dataset = QueryDatasets.named(execution.dataset());
-        var current = authority(execution.token(), dataset);
-        if (!current.sameAuthority(execution.access())) throw QueryException.denied();
-        return Map.of("x-hasura-role", dataset.role(), "x-hasura-user-id", current.userId());
+        // 票据保存入口鉴权结果；消费时检查有效期、发布版本和一次性使用，不再请求用户鉴权。
+        return Map.of("x-hasura-role", dataset.role(), "x-hasura-user-id", execution.access().userId());
     }
 
     private void writeAudit(String id, AccessClient.Access user, String event, String fingerprint, int rows, QueryDatasets.Dataset dataset) {
@@ -143,6 +147,14 @@ public class QueryService {
         plan.selectedFields().forEach((key, name) -> {
             if (!row.has(key)) throw badResult();
             JsonNode value = row.get(key);
+            var relation = dataset.relations().get(name);
+            if (relation != null) {
+                if (value.isNull()) return;
+                var selection = plan.relationSelections().get(key);
+                if (selection == null) throw badResult();
+                normalizeFields(value, selection, relation.fields());
+                return;
+            }
             var field = dataset.fields().get(name);
             if (value.isNull()) { if (!field.nullable()) throw badResult(); return; }
             switch (field.kind()) {
@@ -156,8 +168,23 @@ public class QueryService {
                 case "INT" -> {
                     if (!value.isIntegralNumber() || !value.canConvertToInt()) throw badResult();
                 }
+                case "JSON" -> { /* 保留 JSON 对象、数组和标量，不转换成字符串。 */ }
                 default -> { if (!value.isTextual()) throw badResult(); }
             }
+        });
+    }
+
+    private void normalizeFields(JsonNode row, Map<String, String> selected, Map<String, QueryDatasets.Field> fields) {
+        if (!row.isObject() || row.size() != selected.size()) throw badResult();
+        selected.forEach((key, name) -> {
+            JsonNode value = row.get(key);
+            var field = fields.get(name);
+            if (value == null || (value.isNull() && !field.nullable())) throw badResult();
+            if (value.isNull()) return;
+            if ("ID".equals(field.kind())) {
+                if (!value.isTextual() && !value.isIntegralNumber()) throw badResult();
+                ((ObjectNode) row).put(key, value.asText());
+            } else if (!value.isTextual()) throw badResult();
         });
     }
 

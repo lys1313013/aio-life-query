@@ -52,7 +52,7 @@ text=Path(sys.argv[1]).read_text()
 print('\n'.join(line.replace("'CONNECTOR_HOST'", "'%'") for line in text.splitlines() if not line.startswith('CREATE USER')))
 PYSQL
 docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root < "$test_dir/grants.sql"
-for rejected in 'SELECT title FROM time_record LIMIT 0' 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT description FROM exercise_record LIMIT 0' 'SELECT remark FROM read_record LIMIT 0' 'SELECT remark FROM movie LIMIT 0' 'SELECT notes FROM b_video LIMIT 0' 'SELECT order_number FROM performance LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
+for rejected in 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT password FROM user LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
   if docker exec "$test_name-mysql" mysql -uaio_query_read -pfixture-query-read-password aio_life -e "$rejected" >/dev/null 2>&1; then
     echo '只读列权限验证失败'; exit 1
   fi

@@ -33,11 +33,11 @@ class ExecutionStoreIntegrationTest {
         var json = new ObjectMapper();
         var plan = new QueryCompiler.Plan("query fixture", json.createObjectNode(), "timeRecords", "timeRecords", Map.of("id", "id"), 1, "time_record");
         var access = new AccessClient.Access(userId, "aio-life-query", "fixture", "login", Instant.now().getEpochSecond() + 60);
-        String ticket = store.issue("fixture-authority", access, "fixture", plan);
+        String ticket = store.issue(access, "fixture", plan);
         assertEquals(access, store.consume(ticket).access());
         assertThrows(QueryException.class, () -> store.consume(ticket));
         var expired = new AccessClient.Access(userId, "aio-life-query", "fixture", "login", 1);
-        String expiredTicket = store.issue("fixture-authority", expired, "fixture", plan);
+        String expiredTicket = store.issue(expired, "fixture", plan);
         assertThrows(QueryException.class, () -> store.consume(expiredTicket));
     }
 
@@ -51,5 +51,23 @@ class ExecutionStoreIntegrationTest {
             assertThrows(QueryException.class, () -> store.acquire(userId));
         } finally { leases.forEach(ExecutionStore.Lease::close); }
         try (var available = store.acquire(userId)) { assertNotNull(available); }
+    }
+
+    @Test void ticketStoresOnlyAuthorizedIdentityAndRejectsStaleReleaseAndForgery() throws Exception {
+        var json = new ObjectMapper();
+        var plan = new QueryCompiler.Plan("query fixture", json.createObjectNode(), "timeRecords", "timeRecords", Map.of("id", "id"), 1, "time_record");
+        var access = new AccessClient.Access(userId, "aio-life-query", "fixture", "login", Instant.now().getEpochSecond() + 60);
+        String ticket = store.issue(access, "fixture", plan);
+        var redis = new StringRedisTemplate(connection);
+        String key = "aioQuery:execution:v2:" + ExecutionStore.hash(ticket);
+        var snapshot = (com.fasterxml.jackson.databind.node.ObjectNode) json.readTree(redis.opsForValue().get(key));
+        assertFalse(snapshot.has("token"));
+        assertEquals(userId, snapshot.at("/access/userId").asText());
+        assertEquals("time_record", snapshot.path("dataset").asText());
+        snapshot.put("release", "obsolete-release");
+        redis.opsForValue().set(key, json.writeValueAsString(snapshot), java.time.Duration.ofSeconds(30));
+        assertThrows(QueryException.class, () -> store.consume(ticket));
+        assertNull(redis.opsForValue().get(key));
+        assertThrows(QueryException.class, () -> store.consume("aqe_" + "x".repeat(43)));
     }
 }

@@ -53,7 +53,7 @@ class QueryMcpCompatibilityTest {
                         .content("""
                                 {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
                                   "name":"aio_query_execute","arguments":{
-                                    "domain":"time","schemaVersion":"time-record-v1","policyVersion":"time-record-v1",
+                                    "domain":"time","schemaVersion":"time-record-v3","policyVersion":"time-record-v3",
                                     "operationName":"Q","query":"query Q { timeRecords { id } }","userId":"another-user"}}}
                                 """))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.result.isError").value(true))

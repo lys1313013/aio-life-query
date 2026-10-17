@@ -22,7 +22,7 @@ class AccessClientTest {
                 new ObjectMapper().readTree("{\"rscode\":\"0\",\"data\":{\"userId\":\"9007199254740993\",\"appId\":\"aio-life-query\",\"role\":\"ai_time_reader\",\"scopes\":[\"time.read\"],\"credentialId\":\"" + "a".repeat(32) + "\",\"credentialType\":\"api_key\",\"expiresAt\":9223372036854775807}}")));
         assertEquals("9007199254740993", client.evaluate("ak-fixture").userId());
         verify(http).post(eq(properties.accessUrl()), eq(Map.of("Authorization", "Bearer ak-fixture",
-                "X-AIO-Query-Service-Key", properties.serviceKey())), eq(Map.of("dataset", "time_record")), eq(16384), eq(2));
+                "X-AIO-Query-Service-Key", properties.serviceKey())), eq(Map.of("dataset", "time_record")), eq(16384), eq(3));
     }
 
     @Test void failsClosedOnRevokedCredentialDependencyFailureAndSecondaryLock() throws Exception {

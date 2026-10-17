@@ -8,21 +8,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DATASETS = json.loads((ROOT / 'src/main/resources/datasets.json').read_text())
+RELATIONSHIPS = json.loads((ROOT / 'src/main/resources/relationships.json').read_text())
 
 def fields(dataset):
-    result = dict(dataset['fields'])
-    deleted_type = 'INT' if dataset['name'] in ['exercise_record', 'b_video'] else 'TINYINT'
-    result['userId'] = dict(column='user_id', kind='ID', sqlType='BIGINT', nullable=False)
-    result['isDeleted'] = dict(column='is_deleted', kind='INT', sqlType=deleted_type, nullable=False)
-    return result
+    # 全部物理字段均可读；ModelPermissions 独立强制用户隔离和逻辑删除过滤。
+    return dict(dataset['fields'])
 
 def ndc_type(field):
-    return {'BIGINT':'INT64', 'VARCHAR':'STRING', 'DATE':'DATE', 'DATETIME':'TIMESTAMP',
+    return {'BIGINT':'INT64', 'VARCHAR':'STRING', 'TEXT':'STRING', 'JSON':'JSON', 'DATE':'DATE', 'DATETIME':'TIMESTAMP',
             'INT':'INT32', 'TINYINT':'INT8', 'SMALLINT UNSIGNED':'INT32', 'DECIMAL':'BIGDECIMAL'}[field['sqlType']]
 
 def api_type(field):
     return {'INT64':'BigInt', 'STRING':'String', 'DATE':'String', 'TIMESTAMP':'String',
-            'INT32':'Int', 'INT8':'Int', 'BIGDECIMAL':'BigDecimal'}[ndc_type(field)]
+            'INT32':'Int', 'INT8':'Int', 'BIGDECIMAL':'BigDecimal', 'JSON':'Json'}[ndc_type(field)]
 
 def comparison(field):
     return {'INT64':'CategoryComparison', 'STRING':'IdComparison', 'DATE':'DateComparison',
@@ -64,14 +62,21 @@ def connector_config():
                        'columns':columns, 'pks':['id'], 'fks':{}})
     return {'jdbcUrl':{'variable':'JDBC_URL'}, 'jdbcProperties':{'connectTimeout':'2000','socketTimeout':'6000',
             'sessionVariables':'max_execution_time=5000,group_concat_max_len=1000000', 'allowMultiQueries':'false', 'allowLoadLocalInfile':'false'},
-            'tables':tables, 'functions':[], 'nativeQueries':{}}
+            'tables':tables, 'functions':[], 'nativeQueries':{
+                relation['collection']: {
+                    'sql': (ROOT / relation['nativeSql']).read_text(),
+                    'columns': {field['column']: {'type': 'nullable', 'underlying_type': {'type': 'named', 'name': field['sqlType']}}
+                                if field['nullable'] else {'type': 'named', 'name': field['sqlType']}
+                                for field in relation['fields'].values()},
+                    'arguments': {}, 'isProcedure': False
+                } for relations in RELATIONSHIPS.values() for relation in relations.values()}}
 
 def build(connector_url, connector_key):
     scalar_types = {}
     for name, representation in [('STRING','string'), ('DATE','date'), ('TIMESTAMP','timestamp'),
-                                 ('INT8','int8'), ('INT32','int32'), ('INT64','int64'), ('BIGDECIMAL','bigdecimal')]:
+                                 ('INT8','int8'), ('INT32','int32'), ('INT64','int64'), ('BIGDECIMAL','bigdecimal'), ('JSON','json')]:
         ops = {'_eq': {'type':'equal'}}
-        if name != 'STRING':
+        if name not in ['STRING', 'JSON']:
             ops.update({op:{'type':'custom','argument_type':{'type':'named','name':name}} for op in ['_gte','_lt','_lte']})
         scalar_types[name] = {'representation':{'type':representation}, 'comparison_operators':ops, 'aggregate_functions':{}}
     for name, result in [('INT32','INT64'), ('BIGDECIMAL','BIGDECIMAL')]:
@@ -86,13 +91,22 @@ def build(connector_url, connector_key):
         schema['object_types'][dataset['name']] = {'fields':ndc_fields}
         schema['collections'].append({'name':dataset['name'], 'type':dataset['name'], 'arguments':{},
             'uniqueness_constraints':{'primary':{'unique_columns':['id']}}, 'foreign_keys':{}})
+    for relations in RELATIONSHIPS.values():
+        for relation in relations.values():
+            collection = relation['collection']
+            schema['object_types'][collection] = {'fields': {
+                field['column']: {'type': {'type': 'nullable', 'underlying_type': {'type': 'named', 'name': ndc_type(field)}}
+                                  if field['nullable'] else {'type': 'named', 'name': ndc_type(field)}, 'arguments': {}}
+                for field in relation['fields'].values()}}
+            schema['collections'].append({'name': collection, 'type': collection, 'arguments': {},
+                'uniqueness_constraints': {'primary': {'unique_columns': ['record_id']}}, 'foreign_keys': {}})
     objects = [obj('DataConnectorLink', {'name':'mysql', 'url':{'singleUrl':{'value':connector_url}},
         'headers':{'Authorization':{'value':'Bearer '+connector_key}}, 'schema':{'version':'v0.1','schema':schema,
         'capabilities':{'version':'0.1.6','capabilities':{'query':{'aggregates':{},'variables':{}}, 'mutation':{},
         'relationships':{'relation_comparisons':{},'order_by_aggregate':{}}}}}})]
-    for name in ['BigInt','BigDecimal']:
+    for name in ['BigInt','BigDecimal','Json']:
         objects.append(obj('ScalarType', {'name':name,'graphql':{'typeName':name}}))
-    for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT8','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal')]:
+    for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT8','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal'),('JSON','Json')]:
         objects.append(obj('DataConnectorScalarRepresentation', {'dataConnectorName':'mysql','dataConnectorScalarType':ndc,'representation':api}))
     for name, scalar, api, ops in [('DateComparison','DATE','String',['_gte','_lt']),
                                   ('TimestampComparison','TIMESTAMP','String',['_gte','_lt']),
@@ -117,8 +131,9 @@ def build(connector_url, connector_key):
             'dataConnectorTypeMapping':[{'dataConnectorName':'mysql','dataConnectorObjectType':dataset['name'],
                 'fieldMapping':{key:{'column':{'name':field['column']}} for key,field in all_fields.items()}}]}))
         objects.append(obj('BooleanExpressionType', {'name':name+'BoolExp','operand':{'object':{'type':name,
-            'comparableFields':[{'fieldName':key,'booleanExpressionType':comparison(field)} for key,field in all_fields.items()],
-            'comparableRelationships':[]}}, 'logicalOperators':{'enable':False},'isNull':{'enable':False},'graphql':{'typeName':name+'BoolExp'}}))
+            'comparableFields':[{'fieldName':key,'booleanExpressionType':comparison(field)} for key,field in all_fields.items() if field['kind'] != 'JSON'],
+            'comparableRelationships':[{'relationshipName':key, 'booleanExpressionType': relation['typeName']+'BoolExp'}
+                for key, relation in RELATIONSHIPS.get(dataset['name'], {}).items()]}}, 'logicalOperators':{'enable':False},'isNull':{'enable':False},'graphql':{'typeName':name+'BoolExp'}}))
         objects.append(obj('AggregateExpression', {'name':name+'Aggregate','operand':{'object':{'aggregatedType':name,
             'aggregatableFields':[{'fieldName':key,'aggregateExpression':'DecimalSum' if dataset['fields'][key]['kind']=='DECIMAL' else 'IntSum'} for key in dataset['aggregateFields']]}},
             'count':{'enable':True},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
@@ -131,6 +146,31 @@ def build(connector_url, connector_key):
             {'fieldComparison':{'field':'userId','operator':'_eq','value':{'sessionVariable':'x-hasura-user-id'}}},
             {'fieldComparison':{'field':'isDeleted','operator':'_eq','value':{'literal':0}}}]}}}]}))
         objects.append(obj('TypePermissions', {'typeName':name,'permissions':[{'role':dataset['role'],'output':{'allowedFields':list(dataset['fields'])}}]}))
+        for key, relation in RELATIONSHIPS.get(dataset['name'], {}).items():
+            target = relation['typeName']; relation_fields = relation['fields']; model = target+'Model'
+            objects.append(obj('ObjectType', {'name': target, 'graphql': {'typeName': target},
+                'fields': [{'name': field_name, 'type': api_type(field)+('' if field['nullable'] else '!')}
+                           for field_name, field in relation_fields.items()],
+                'dataConnectorTypeMapping': [{'dataConnectorName': 'mysql', 'dataConnectorObjectType': relation['collection'],
+                    'fieldMapping': {field_name: {'column': {'name': field['column']}} for field_name, field in relation_fields.items()}}]}))
+            objects.append(obj('BooleanExpressionType', {'name': target+'BoolExp', 'operand': {'object': {'type': target,
+                'comparableFields': [{'fieldName': field_name, 'booleanExpressionType': comparison(relation_fields[field_name])}
+                                     for field_name in relation_fields], 'comparableRelationships': []}},
+                'logicalOperators': {'enable': False}, 'isNull': {'enable': False}, 'graphql': {'typeName': target+'BoolExp'}}))
+            objects.append(obj('Model', {'name': model, 'objectType': target,
+                'source': {'dataConnectorName': 'mysql', 'collection': relation['collection']},
+                'filterExpressionType': target+'BoolExp', 'orderableFields': []}))
+            objects.append(obj('ModelPermissions', {'modelName': model, 'permissions': [{'role': dataset['role'],
+                'select': {'filter': {'fieldComparison': {'field': 'userId', 'operator': '_eq',
+                    'value': {'sessionVariable': 'x-hasura-user-id'}}}}}]}))
+            objects.append(obj('TypePermissions', {'typeName': target, 'permissions': [{'role': dataset['role'],
+                # Hasura requires visibility of both mapping fields to expose a relationship.
+                # The gateway SDL still exposes only outputFields, keeping recordId internal.
+                'output': {'allowedFields': list(dict.fromkeys(relation['outputFields'] + [relation['targetField']]))}}]}))
+            objects.append(obj('Relationship', {'name': key, 'sourceType': name,
+                'target': {'model': {'name': model, 'subgraph': 'aio', 'relationshipType': 'Object'}},
+                'mapping': [{'source': {'fieldPath': [{'fieldName': relation['sourceField']}]},
+                             'target': {'modelField': [{'fieldName': relation['targetField']}]}}]}))
     objects.append(obj('GraphqlConfig', {'query':{'rootOperationTypeName':'Query','argumentsInput':{'fieldName':'args'},
         'limitInput':{'fieldName':'limit'},'offsetInput':{'fieldName':'offset'},
         'filterInput':{'fieldName':'where','operatorNames':{'and':'_and','or':'_or','not':'_not','isNull':'_is_null'}},

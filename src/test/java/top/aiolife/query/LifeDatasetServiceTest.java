@@ -25,7 +25,7 @@ class LifeDatasetServiceTest {
         service = new QueryService(access,new QueryCompiler(json),store,http,audit,
             new QueryProperties(URI.create("http://auth"),URI.create("http://hasura"),"s".repeat(32),"w".repeat(32),Path.of("unused")),json);
         when(store.acquire(user.userId())).thenReturn(mock(ExecutionStore.Lease.class));
-        when(store.issue(anyString(),eq(user),anyString(),any())).thenReturn("ticket");
+        when(store.issue(eq(user),anyString(),any())).thenReturn("ticket");
     }
     private QueryCompiler.Request request(QueryDatasets.Dataset dataset, String fields) {
         return new QueryCompiler.Request(dataset.domain(),dataset.release(),dataset.release(),"Recent",
@@ -33,7 +33,7 @@ class LifeDatasetServiceTest {
     }
 
     @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","performance"})
-    void detailsPreserveIdsAndRecheckTheSameBusinessBeforeReturning(String name) throws Exception {
+    void detailsPreserveIdsAndAuthorizeTheDatasetOnce(String name) throws Exception {
         var dataset=QueryDatasets.named(name);
         when(access.evaluate("token",name)).thenReturn(user);
         when(http.post(any(),anyMap(),any(),anyInt(),anyInt())).thenReturn(new BoundedHttp.Response(200,
@@ -41,8 +41,8 @@ class LifeDatasetServiceTest {
         var result=json.valueToTree(service.execute("token",request(dataset,"id")));
         assertEquals("9007199254740993",result.at("/result/"+dataset.root()+"/0/id").textValue());
         assertEquals(dataset.release(),result.path("schemaVersion").asText());
-        verify(access,times(2)).evaluate("token",name); verify(access,never()).evaluate("token");
-        when(access.evaluate("token",name)).thenReturn(user).thenThrow(QueryException.denied());
+        verify(access).evaluate("token",name); verifyNoMoreInteractions(access);
+        when(access.evaluate("token",name)).thenThrow(QueryException.denied());
         assertThrows(QueryException.class,()->service.execute("token",request(dataset,"id")));
     }
 
@@ -53,7 +53,10 @@ class LifeDatasetServiceTest {
         when(access.evaluate("token","movie")).thenThrow(new QueryException("SECONDARY_LOCK_REQUIRED",403,"fixture"));
         var catalog=json.valueToTree(service.catalog("token",null));
         assertEquals(5,catalog.size());
-        for(var entry:catalog) assertNotEquals("movie",entry.path("name").asText());
+        for(var entry:catalog) {
+            assertNotEquals("movie",entry.path("name").asText());
+            assertEquals(366,entry.path("maxDateRangeDays").asInt());
+        }
         assertThrows(QueryException.class,()->service.catalog("token","movie"));
     }
 
@@ -68,9 +71,8 @@ class LifeDatasetServiceTest {
     }
 
     @Test void webhookUsesOnlyTheDatasetStoredInTheSingleUseTicket() {
-        when(store.consume("ticket")).thenReturn(new ExecutionStore.Ticket("token",user,"query","hash","movie-v1",Long.MAX_VALUE,"movie"));
-        when(access.evaluate("token","movie")).thenReturn(user);
+        when(store.consume("ticket")).thenReturn(new ExecutionStore.Ticket(user,"query","hash","movie-v2",Long.MAX_VALUE,"movie"));
         assertEquals(Map.of("x-hasura-role","ai_movie_reader","x-hasura-user-id",user.userId()),service.webhook("ticket"));
-        verify(access).evaluate("token","movie"); verify(access,never()).evaluate("token");
+        verifyNoInteractions(access);
     }
 }

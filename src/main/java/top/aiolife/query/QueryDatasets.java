@@ -9,8 +9,12 @@ import java.util.Map;
 
 /** 目录、查询白名单与 Hasura 元数据共用 datasets.json，禁止全库自动导入。 */
 public final class QueryDatasets {
+    public record Relation(String typeName, String collection, String sourceField, String targetField,
+                           String nativeSql, List<String> outputFields, Map<String, Field> fields) {
+        public String boolType() { return typeName + "BoolExp"; }
+    }
     public record Field(String column, String kind, String sqlType, boolean nullable) {
-        public String apiType() { return "INT".equals(kind) ? "Int" : "String"; }
+        public String apiType() { return "INT".equals(kind) ? "Int" : "JSON".equals(kind) ? "JSON" : "String"; }
         public String comparison() {
             return switch (kind) {
                 case "DATE", "DATETIME" -> "DateComparison";
@@ -26,6 +30,7 @@ public final class QueryDatasets {
         public String boolType() { return typeName + "BoolExp"; }
         public String orderType() { return typeName + "OrderBy"; }
         public String statsType() { return typeName + "Stats"; }
+        public Map<String, Relation> relations() { return RELATIONS.getOrDefault(name, Map.of()); }
         public String sdl() {
             var out = new StringBuilder("type Query {\n  ").append(root).append("(where: ").append(boolType())
                     .append("!, limit: Int = 100, offset: Int = 0, orderBy: [").append(orderType()).append("!]): [")
@@ -33,16 +38,28 @@ public final class QueryDatasets {
                     .append("!): ").append(statsType()).append("!\n}\ntype ").append(typeName).append(" {\n");
             fields.forEach((name, field) -> out.append("  ").append(name).append(": ").append(field.apiType())
                     .append("id".equals(name) ? "!" : "").append('\n'));
+            relations().forEach((key, relation) -> out.append("  ").append(key).append(": ").append(relation.typeName()).append('\n'));
             out.append("}\ntype ").append(statsType()).append(" { count: String!");
             aggregateFields.forEach(name -> out.append(' ').append(name).append(": NumericStats"));
             out.append(" }\ntype NumericStats { sum: String }\ninput ").append(boolType()).append(" {\n");
-            fields.forEach((name, field) -> out.append("  ").append(name).append(": ").append(field.comparison()).append('\n'));
+            fields.forEach((name, field) -> {
+                if (!"JSON".equals(field.kind())) out.append("  ").append(name).append(": ").append(field.comparison()).append('\n');
+            });
+            relations().forEach((key, relation) -> out.append("  ").append(key).append(": ").append(relation.boolType()).append('\n'));
             out.append("}\ninput ").append(orderType()).append(" {\n");
             orderFields.forEach(name -> out.append("  ").append(name).append(": OrderDirection\n"));
-            return out.append("}\ninput DateComparison { _gte: String! _lt: String! }\n")
+            out.append("}\n");
+            relations().values().forEach(relation -> {
+                out.append("type ").append(relation.typeName()).append(" {\n");
+                relation.outputFields().forEach(key -> out.append(key).append(": ").append(relation.fields().get(key).apiType()).append('\n'));
+                out.append("}\ninput ").append(relation.boolType()).append(" {\n");
+                relation.outputFields().forEach(key -> out.append(key).append(": ").append(relation.fields().get(key).comparison()).append('\n'));
+                out.append("}\n");
+            });
+            return out.append("input DateComparison { _gte: String! _lt: String! }\n")
                     .append("input IdComparison { _eq: String! }\ninput IntComparison { _eq: Int _gte: Int _lte: Int }\n")
                     .append("input DecimalComparison { _eq: String _gte: String _lte: String }\n")
-                    .append("enum OrderDirection { Asc Desc }\n").toString();
+                    .append("enum OrderDirection { Asc Desc }\nscalar JSON\n").toString();
         }
         public String example() {
             return "query Recent($start:String!,$end:String!){" + root + "(where:{" + rangeFields.getFirst()
@@ -50,9 +67,12 @@ public final class QueryDatasets {
         }
     }
     private static final List<Dataset> ALL;
+    private static final Map<String, Map<String, Relation>> RELATIONS;
     static {
-        try (var input = new ClassPathResource("datasets.json").getInputStream()) {
+        try (var input = new ClassPathResource("datasets.json").getInputStream();
+             var relations = new ClassPathResource("relationships.json").getInputStream()) {
             ALL = List.copyOf(new ObjectMapper().readValue(input, new TypeReference<List<Dataset>>() {}));
+            RELATIONS = new ObjectMapper().readValue(relations, new TypeReference<Map<String, Map<String, Relation>>>() {});
         } catch (Exception error) { throw new ExceptionInInitializerError(error); }
     }
     private QueryDatasets() {}

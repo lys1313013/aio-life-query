@@ -28,15 +28,15 @@ class QueryServiceTest {
                 "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}){id categoryId durationMinutes} }", null);
         when(access.evaluate("token")).thenReturn(user);
         when(store.acquire(user.userId())).thenReturn(mock(ExecutionStore.Lease.class));
-        when(store.issue(eq("token"), eq(user), anyString(), any())).thenReturn("ticket");
+        when(store.issue(eq(user), anyString(), any())).thenReturn("ticket");
     }
 
-    @Test void preservesBigintAndRechecksBeforeDelivery() throws Exception {
+    @Test void preservesBigintAndAuthorizesOnlyAtEntry() throws Exception {
         when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
                 json.readTree("{\"data\":{\"timeRecords\":[{\"id\":\"r1\",\"categoryId\":9007199254740993,\"durationMinutes\":60}]}}")));
         var result = json.valueToTree(service.execute("token", request));
         assertEquals("9007199254740993", result.at("/result/timeRecords/0/categoryId").textValue());
-        verify(access, times(2)).evaluate("token"); verify(store).discard("ticket");
+        verify(access).evaluate("token"); verifyNoMoreInteractions(access); verify(store).discard("ticket");
         verify(audit).write(anyString(), eq(user), eq("SUCCEEDED"), anyString(), eq(1));
     }
 
@@ -47,22 +47,14 @@ class QueryServiceTest {
         assertFalse(error.getMessage().contains("secret")); verify(audit, never()).write(anyString(), any(), eq("SUCCEEDED"), any(), anyInt());
     }
 
-    @Test void revokedBeforeDeliveryNeverReturnsData() throws Exception {
+    @Test void revocationTakesEffectOnTheNextRequest() throws Exception {
         when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200, json.readTree("{\"data\":{\"timeRecords\":[]}}")));
         when(access.evaluate("token")).thenReturn(user).thenThrow(QueryException.denied());
-        assertThrows(QueryException.class, () -> service.execute("token", request));
-        verify(audit, never()).write(anyString(), any(), eq("SUCCEEDED"), any(), anyInt());
-    }
-
-    @Test void expirationRoundingDoesNotChangeIdentityButIdentityChangesAreRejected() throws Exception {
-        when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
-                json.readTree("{\"data\":{\"timeRecords\":[]}}")));
-        when(access.evaluate("token")).thenReturn(user).thenReturn(new AccessClient.Access(
-                user.userId(), user.appId(), user.credentialId(), user.credentialType(), Long.MAX_VALUE - 1));
         assertDoesNotThrow(() -> service.execute("token", request));
-        when(access.evaluate("token")).thenReturn(user).thenReturn(new AccessClient.Access(
-                "9007199254740994", user.appId(), user.credentialId(), user.credentialType(), Long.MAX_VALUE));
         assertThrows(QueryException.class, () -> service.execute("token", request));
+        verify(access, times(2)).evaluate("token");
+        verify(http).post(any(), anyMap(), any(), anyInt(), anyInt());
+        verify(audit).write(anyString(), eq(user), eq("SUCCEEDED"), anyString(), eq(0));
     }
 
     @Test void auditFailurePreventsDatabaseExecution() {

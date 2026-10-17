@@ -31,7 +31,7 @@ public class ExecutionStore {
             """, Long.class);
 
     public ExecutionStore(StringRedisTemplate redis, ObjectMapper json) { this.redis = redis; this.json = json; }
-    record Ticket(String token, AccessClient.Access access, String queryId, String operationHash, String release, long expiresAt, String dataset) {}
+    record Ticket(AccessClient.Access access, String queryId, String operationHash, String release, long expiresAt, String dataset) {}
 
     public void rate(String userId) {
         Long count = redis.execute(RATE, List.of("aioQuery:rate:v1:" + userId));
@@ -55,12 +55,12 @@ public class ExecutionStore {
         public void close() { for (String key : keys) redis.opsForZSet().remove(key, id); }
     }
 
-    public String issue(String token, AccessClient.Access access, String queryId, QueryCompiler.Plan plan) {
+    public String issue(AccessClient.Access access, String queryId, QueryCompiler.Plan plan) {
         byte[] bytes = new byte[32]; RANDOM.nextBytes(bytes);
         String ticket = "aqe_" + Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         long expires = Math.min(access.expiresAt(), Instant.now().getEpochSecond() + 30);
         try {
-            Ticket value = new Ticket(token, access, queryId, hash(json.writeValueAsString(plan)), QueryDatasets.named(plan.dataset()).release(), expires, plan.dataset());
+            Ticket value = new Ticket(access, queryId, hash(json.writeValueAsString(plan)), QueryDatasets.named(plan.dataset()).release(), expires, plan.dataset());
             if (!Boolean.TRUE.equals(redis.opsForValue().setIfAbsent(key(ticket), json.writeValueAsString(value),
                     Duration.ofSeconds(Math.max(1, expires - Instant.now().getEpochSecond()))))) throw QueryException.denied();
             return ticket;
@@ -80,7 +80,7 @@ public class ExecutionStore {
     }
 
     void discard(String ticket) { redis.delete(key(ticket)); }
-    private String key(String ticket) { return "aioQuery:execution:v1:" + hash(ticket); }
+    private String key(String ticket) { return "aioQuery:execution:v2:" + hash(ticket); }
     static String hash(String text) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(text.getBytes(StandardCharsets.UTF_8))); }
         catch (NoSuchAlgorithmException e) { throw new IllegalStateException(e); }

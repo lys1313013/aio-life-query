@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -35,17 +36,37 @@ class QueryCompilerTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"userId", "isDeleted", "description", "title", "__typename", "category { id }"})
+    @CsvSource({
+            "date,2026-01-01,2027-01-01,true",
+            "date,2024-01-01,2025-01-01,true",
+            "date,2024-01-01,2025-01-02,false",
+            "createdAt,2024-01-01T12:00:00,2025-01-01T12:00:00,true",
+            "createdAt,2024-01-01T12:00:00,2025-01-01T12:00:01,false"
+    })
+    void enforces366DayBoundaryForDetailsAndAggregates(String field, String start, String end, boolean allowed) {
+        for (String root : new String[]{"timeRecords", "timeRecordStats"}) {
+            String selection = root.equals("timeRecords") ? "id" : "count";
+            var request = compiler.graphqlRequest(new QueryCompiler.GraphqlRequest(
+                    "query Q($start:String!,$end:String!){" + root + "(where:{" + (field.equals("date") ? "" : "date:{_gte:\"2024-01-01\",_lt:\"2025-01-01\"},") + field
+                            + ":{_gte:$start,_lt:$end}}){" + selection + "}}", "Q",
+                    json.createObjectNode().put("start", start).put("end", end), null));
+            if (allowed) assertDoesNotThrow(() -> compiler.compile(request));
+            else assertThrows(QueryException.class, () -> compiler.compile(request));
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"password", "unknownField", "__typename", "category { userId }"})
     void rejectsHiddenOutputAndRelations(String selection) { assertThrows(QueryException.class, () -> compiler.compile(request(query(selection), null))); }
 
     @ParameterizedTest
     @ValueSource(strings = {
-            "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},userId:{_eq:\"2\"}}){id}}",
+            "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},accountId:{_eq:\"2\"}}){id}}",
             "query Q { timeRecords(where:{date:{_gte:\"2025-01-01\",_lt:\"2026-10-01\"}}){id}}",
             "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-09-01\"}}){id}}",
             "query Q { timeRecords(where:{date:{_gte:\"2026-02-30\",_lt:\"2026-03-01\"}}){id}}",
             "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}},limit:1001){id}}",
-            "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}},orderBy:[{userId:Asc}]){id}}",
+            "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}},orderBy:[{accountId:Asc}]){id}}",
             "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}){id @skip(if:true)}}",
             "query Q { __schema { types { name } } }",
             "mutation Q { deleteTimeRecords { id } }",
@@ -55,7 +76,7 @@ class QueryCompilerTest {
     void rejectsBypassesAndUnboundedQueries(String query) { assertThrows(QueryException.class, () -> compiler.compile(request(query, null))); }
 
     @Test void validatesExpandedVariableValuesAndOldSchema() throws Exception {
-        var vars = (ObjectNode) json.readTree("{\"where\":{\"date\":{\"_gte\":\"2026-09-01\",\"_lt\":\"2026-10-01\"},\"userId\":{\"_eq\":\"2\"}}}");
+        var vars = (ObjectNode) json.readTree("{\"where\":{\"date\":{\"_gte\":\"2026-09-01\",\"_lt\":\"2026-10-01\"},\"accountId\":{\"_eq\":\"2\"}}}");
         assertThrows(QueryException.class, () -> compiler.compile(request("query Q($where:TimeRecordBoolExp!){timeRecords(where:$where){id}}", vars)));
         assertThrows(QueryException.class, () -> compiler.compile(new QueryCompiler.Request("time", "old", QueryProperties.RELEASE, "Q", query("id"), null)));
     }

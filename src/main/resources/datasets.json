@@ -5,10 +5,10 @@
     "typeName": "TimeRecord",
     "root": "timeRecords",
     "statsRoot": "timeRecordStats",
-    "release": "time-record-v1",
+    "release": "time-record-v3",
     "role": "ai_time_reader",
     "scope": "time.read",
-    "description": "当前用户未删除的时迹；durationMinutes 单位为分钟",
+    "description": "当前用户未删除的完整时迹；startTime/endTime 为当天分钟数，durationMinutes 为分钟；按天记录的零点片段不一定代表零点入睡",
     "rangeFields": [
       "date"
     ],
@@ -36,6 +36,84 @@
         "kind": "INT",
         "sqlType": "SMALLINT UNSIGNED",
         "nullable": false
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "startTime": {
+        "column": "start_time",
+        "kind": "INT",
+        "sqlType": "SMALLINT UNSIGNED",
+        "nullable": false
+      },
+      "endTime": {
+        "column": "end_time",
+        "kind": "INT",
+        "sqlType": "SMALLINT UNSIGNED",
+        "nullable": false
+      },
+      "title": {
+        "column": "title",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "description": {
+        "column": "description",
+        "kind": "TEXT",
+        "sqlType": "TEXT",
+        "nullable": true
+      },
+      "isManual": {
+        "column": "is_manual",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": false
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "relateId": {
+        "column": "relate_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "relateType": {
+        "column": "relate_type",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": false
       }
     },
     "aggregateFields": [
@@ -44,7 +122,20 @@
     "orderFields": [
       "id",
       "date",
-      "durationMinutes"
+      "categoryId",
+      "durationMinutes",
+      "createUser",
+      "startTime",
+      "endTime",
+      "title",
+      "isManual",
+      "createdAt",
+      "updateUser",
+      "updatedAt",
+      "relateId",
+      "relateType",
+      "userId",
+      "isDeleted"
     ]
   },
   {
@@ -53,7 +144,7 @@
     "typeName": "ExerciseRecord",
     "root": "exerciseRecords",
     "statsRoot": "exerciseRecordStats",
-    "release": "exercise-record-v1",
+    "release": "exercise-record-v2",
     "role": "ai_exercise_reader",
     "scope": "exercise.read",
     "description": "运动记录；exerciseCount 为对应运动类型的记录数量，count 为记录条数",
@@ -84,6 +175,54 @@
         "kind": "INT",
         "sqlType": "INT",
         "nullable": false
+      },
+      "description": {
+        "column": "description",
+        "kind": "TEXT",
+        "sqlType": "TEXT",
+        "nullable": true
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "timeId": {
+        "column": "time_id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": false
       }
     },
     "aggregateFields": [
@@ -92,7 +231,15 @@
     "orderFields": [
       "id",
       "exerciseDate",
-      "exerciseCount"
+      "exerciseTypeId",
+      "exerciseCount",
+      "createUser",
+      "createdAt",
+      "updatedAt",
+      "updateUser",
+      "timeId",
+      "userId",
+      "isDeleted"
     ]
   },
   {
@@ -101,7 +248,7 @@
     "typeName": "ReadRecord",
     "root": "readRecords",
     "statsRoot": "readRecordStats",
-    "release": "read-record-v1",
+    "release": "read-record-v2",
     "role": "ai_reading_reader",
     "scope": "reading.read",
     "description": "阅读书籍/文章、进度及完成情况；可按创建、开始或完成时间限定范围",
@@ -176,15 +323,70 @@
         "kind": "DATETIME",
         "sqlType": "DATETIME",
         "nullable": false
+      },
+      "remark": {
+        "column": "remark",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "fileId": {
+        "column": "file_id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
       }
     },
     "aggregateFields": [],
     "orderFields": [
       "id",
-      "createdAt",
+      "title",
+      "type",
+      "author",
+      "url",
+      "status",
+      "totalProgress",
+      "currentProgress",
       "startTime",
       "finishTime",
-      "currentProgress"
+      "createdAt",
+      "remark",
+      "updatedAt",
+      "createUser",
+      "updateUser",
+      "fileId",
+      "userId",
+      "isDeleted"
     ]
   },
   {
@@ -193,7 +395,7 @@
     "typeName": "Movie",
     "root": "movies",
     "statsRoot": "movieStats",
-    "release": "movie-v1",
+    "release": "movie-v2",
     "role": "ai_movie_reader",
     "scope": "movie.read",
     "description": "影视观看状态、进度、个人评分；可按创建、开始或完成时间限定范围",
@@ -274,15 +476,71 @@
         "kind": "DATETIME",
         "sqlType": "DATETIME",
         "nullable": false
+      },
+      "remark": {
+        "column": "remark",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "fileId": {
+        "column": "file_id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
       }
     },
     "aggregateFields": [],
     "orderFields": [
       "id",
-      "createdAt",
+      "title",
+      "type",
+      "director",
+      "url",
+      "status",
+      "totalProgress",
+      "currentProgress",
       "startTime",
       "finishTime",
-      "rating"
+      "rating",
+      "createdAt",
+      "remark",
+      "updatedAt",
+      "createUser",
+      "updateUser",
+      "fileId",
+      "userId",
+      "isDeleted"
     ]
   },
   {
@@ -291,7 +549,7 @@
     "typeName": "BVideo",
     "root": "bVideos",
     "statsRoot": "bVideoStats",
-    "release": "b-video-v1",
+    "release": "b-video-v2",
     "role": "ai_video_reader",
     "scope": "video.read",
     "description": "收藏视频、观看状态和进度；durationSeconds / watchedDurationSeconds 单位为秒",
@@ -371,6 +629,84 @@
         "kind": "DATETIME",
         "sqlType": "DATETIME",
         "nullable": false
+      },
+      "cover": {
+        "column": "cover",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "notes": {
+        "column": "notes",
+        "kind": "TEXT",
+        "sqlType": "TEXT",
+        "nullable": true
+      },
+      "aid": {
+        "column": "aid",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "description": {
+        "column": "description",
+        "kind": "TEXT",
+        "sqlType": "TEXT",
+        "nullable": true
+      },
+      "pagesInfo": {
+        "column": "pages_info",
+        "kind": "JSON",
+        "sqlType": "JSON",
+        "nullable": true
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "coverFileId": {
+        "column": "cover_file_id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "coverState": {
+        "column": "cover_state",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "coverVersion": {
+        "column": "cover_version",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": true
       }
     },
     "aggregateFields": [
@@ -379,10 +715,27 @@
     ],
     "orderFields": [
       "id",
-      "createdAt",
-      "lastWatched",
+      "title",
+      "url",
+      "bvid",
+      "ownerName",
       "durationSeconds",
-      "watchedDurationSeconds"
+      "watchedDurationSeconds",
+      "episodes",
+      "currentEpisode",
+      "status",
+      "lastWatched",
+      "createdAt",
+      "cover",
+      "aid",
+      "createUser",
+      "updateUser",
+      "updatedAt",
+      "coverFileId",
+      "coverState",
+      "coverVersion",
+      "userId",
+      "isDeleted"
     ]
   },
   {
@@ -391,10 +744,10 @@
     "typeName": "Performance",
     "root": "performances",
     "statsRoot": "performanceStats",
-    "release": "performance-v1",
+    "release": "performance-v2",
     "role": "ai_performance_reader",
     "scope": "performance.read",
-    "description": "演出、日期、票价与评分；ticketPrice 为元，durationMinutes 为分钟；不开放座位和订单号",
+    "description": "当前用户完整演出记录，含座位、订单号与评价；ticketPrice 为元，durationMinutes 为分钟",
     "rangeFields": [
       "performanceDate"
     ],
@@ -458,6 +811,66 @@
         "kind": "INT",
         "sqlType": "TINYINT",
         "nullable": true
+      },
+      "seatInfo": {
+        "column": "seat_info",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "review": {
+        "column": "review",
+        "kind": "TEXT",
+        "sqlType": "TEXT",
+        "nullable": true
+      },
+      "purchasePlatform": {
+        "column": "purchase_platform",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "orderNumber": {
+        "column": "order_number",
+        "kind": "TEXT",
+        "sqlType": "VARCHAR",
+        "nullable": true
+      },
+      "createUser": {
+        "column": "create_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "createdAt": {
+        "column": "create_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "updateUser": {
+        "column": "update_user",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "updatedAt": {
+        "column": "update_time",
+        "kind": "DATETIME",
+        "sqlType": "DATETIME",
+        "nullable": false
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "TINYINT",
+        "nullable": true
       }
     },
     "aggregateFields": [
@@ -466,9 +879,24 @@
     ],
     "orderFields": [
       "id",
+      "performanceName",
+      "performer",
+      "performanceType",
       "performanceDate",
+      "city",
+      "venue",
       "ticketPrice",
-      "rating"
+      "durationMinutes",
+      "rating",
+      "seatInfo",
+      "purchasePlatform",
+      "orderNumber",
+      "createUser",
+      "createdAt",
+      "updateUser",
+      "updatedAt",
+      "userId",
+      "isDeleted"
     ]
   }
 ]

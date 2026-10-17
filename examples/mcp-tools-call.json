@@ -6,8 +6,8 @@
     "name": "aio_query_execute",
     "arguments": {
       "domain": "time",
-      "schemaVersion": "time-record-v1",
-      "policyVersion": "time-record-v1",
+      "schemaVersion": "time-record-v3",
+      "policyVersion": "time-record-v3",
       "operationName": "Recent",
       "query": "query Recent($start:String!,$end:String!){timeRecords(where:{date:{_gte:$start,_lt:$end}},limit:100){id date categoryId durationMinutes}}",
       "variables": {

@@ -11,12 +11,7 @@ public class AccessClient {
     private final BoundedHttp http;
     private final QueryProperties properties;
     public AccessClient(BoundedHttp http, QueryProperties properties) { this.http = http; this.properties = properties; }
-    public record Access(String userId, String appId, String credentialId, String credentialType, long expiresAt) {
-        public boolean sameAuthority(Access other) {
-            return other != null && userId.equals(other.userId) && appId.equals(other.appId)
-                    && credentialId.equals(other.credentialId) && credentialType.equals(other.credentialType);
-        }
-    }
+    public record Access(String userId, String appId, String credentialId, String credentialType, long expiresAt) {}
 
     public Access evaluate(String token) { return evaluate(token, "time_record"); }
 
@@ -28,7 +23,7 @@ public class AccessClient {
             throw new QueryException("AUTH_REQUIRED", 401, "需要 AIO Life 登录 Token 或 API Key");
         }
         var response = http.post(properties.accessUrl(), Map.of("X-AIO-Query-Service-Key", properties.serviceKey(),
-                        "Authorization", "Bearer " + token), Map.of("dataset", dataset), 16384, 2);
+                        "Authorization", "Bearer " + token), Map.of("dataset", dataset), 16384, 3);
         var body = response.body();
         if (response.status() == 401) throw new QueryException("AUTH_REQUIRED", 401, "AIO Life 凭据已失效");
         if (response.status() >= 500) throw new QueryException("UPSTREAM_UNAVAILABLE", 503, "AIO Life 认证服务不可用");

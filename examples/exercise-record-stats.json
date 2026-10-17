@@ -1,7 +1,7 @@
 {
   "domain": "exercise",
-  "schemaVersion": "exercise-record-v1",
-  "policyVersion": "exercise-record-v1",
+  "schemaVersion": "exercise-record-v2",
+  "policyVersion": "exercise-record-v2",
   "operationName": "ExerciseSummary",
   "query": "query ExerciseSummary($start:String!,$end:String!){exerciseRecordStats(where:{exerciseDate:{_gte:$start,_lt:$end}}){count exerciseCount{sum}}}",
   "variables": {

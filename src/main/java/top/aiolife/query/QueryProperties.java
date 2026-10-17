@@ -14,5 +14,6 @@ public record QueryProperties(@NotNull URI accessUrl, @NotNull URI hasuraUrl,
                               @NotNull @Size(min = 32) String serviceKey,
                               @NotNull @Size(min = 32) String webhookKey,
                               @NotNull Path auditDirectory) {
-    public static final String RELEASE = "time-record-v1";
+    public static final String RELEASE = "time-record-v3";
+    public static final int MAX_DATE_RANGE_DAYS = 366;
 }

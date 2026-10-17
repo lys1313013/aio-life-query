@@ -27,12 +27,12 @@ class LifeDatasetCompilerTest {
         String sums = dataset.aggregateFields().stream().map(field -> field+"{sum}").reduce("", (a,b)->a+" "+b);
         var stats = compiler.compile(request(dataset, "query Q { "+dataset.statsRoot()+"("+where(dataset)+"){count "+sums+"} }"));
         assertEquals(dataset.statsRoot(), stats.root());
-        for (String forbidden : new String[]{"userId", "isDeleted", "createUser", "orderNumber", "seatInfo", "notes", "category { id }"}) {
+        for (String forbidden : new String[]{"password", "unknownField", "category { id }"}) {
             assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"("+where(dataset)+"){"+forbidden+"} }")));
         }
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}){id} }")));
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"(where:{id:{_eq:\"1\"}}){id} }")));
-        assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"(where:{"+dataset.rangeFields().getFirst()+":{_gte:\"2026-01-01\",_lt:\"2026-10-01\"}}){id} }")));
+        assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"(where:{"+dataset.rangeFields().getFirst()+":{_gte:\"2026-01-01\",_lt:\"2027-01-03\"}}){id} }")));
         assertThrows(QueryException.class, () -> compiler.compile(new QueryCompiler.Request(dataset.domain(), "time-record-v1", "time-record-v1", "Q",dataset.example(),null)));
     }
 

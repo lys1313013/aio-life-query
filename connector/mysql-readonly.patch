@@ -209,3 +209,93 @@
              logger.error("Token is invalid")
              return Response.status(Response.Status.UNAUTHORIZED).build()
          }
+--- a/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseGenerator.kt
++++ b/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseGenerator.kt
+@@ -11,0 +12,15 @@
++
++    // Configured static native queries are derived tables, including in relationship predicates.
++    // This keeps read-only relationships compatible with MySQL 5.7 (no WITH clause).
++    fun collectionTable(collection: String): org.jooq.Table<*> {
++        val native = ConnectorConfiguration.Loader.config.nativeQueries[collection]
++            ?: return DSL.table(DSL.name(collection.split(".")))
++        require(native.arguments.isEmpty()) { "Only static native queries are published" }
++        val parts = native.sql.getParts(ConnectorConfiguration.Loader.CONFIG_DIRECTORY)
++        require(parts.all { it is io.hasura.ndc.common.NativeQueryPart.Text }) {
++            "Native query parameters are not supported"
++        }
++        return DSL.table("({0})", DSL.sql(parts.joinToString("") { it.value }))
++            .`as`(DSL.name(collection))
++    }
++
+@@ -271 +286 @@
+-                                    DSL.table(DSL.name(splitCollectionName(rel.target_collection)))
++                                    collectionTable(rel.target_collection)
+@@ -311 +326 @@
+-                                    DSL.table(DSL.name(splitCollectionName(inTable.collection)))
++                                    collectionTable(inTable.collection)
+--- a/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseQueryGenerator.kt
++++ b/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseQueryGenerator.kt
+@@ -258 +258 @@
+-            DSL.table(DSL.name(relationship.target_collection))
++            collectionTable(relationship.target_collection)
+@@ -344 +344 @@
+-                            DSL.table(DSL.name(rel.target_collection))
++                            collectionTable(rel.target_collection)
+@@ -419 +419 @@
+-            .from(DSL.table(DSL.name(lastRel.target_collection)))
++            .from(collectionTable(lastRel.target_collection))
+@@ -430 +430 @@
+-                .join(DSL.table(DSL.name(prevRel.target_collection)))
++                .join(collectionTable(prevRel.target_collection))
+@@ -525 +525 @@
+-                                            DSL.table(DSL.name(relationship.target_collection))
++                                            collectionTable(relationship.target_collection)
+@@ -536 +536 @@
+-                                            DSL.table(DSL.name(relationship.target_collection))
++                                            collectionTable(relationship.target_collection)
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/JSONGenerator.kt
++++ b/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/JSONGenerator.kt
+@@ -44 +44 @@
+-        return mkNativeQueryCTEs(request).select(
++        return DSL.select(
+@@ -65 +65 @@
+-            DSL.table(tojOOQName(request.collection)).`as`(DSL.name(effectiveAlias))
++            collectionTable(request.collection).`as`(DSL.name(effectiveAlias))
+@@ -67 +67 @@
+-            DSL.table(tojOOQName(request.collection))
++            collectionTable(request.collection)
+@@ -72 +72,2 @@
+-                .firstOrNull { it.tableName == request.collection }
++                .firstOrNull { it.tableName == request.collection }?.columns?.map { it.name }
++                ?: io.hasura.ndc.common.ConnectorConfiguration.Loader.config.nativeQueries[request.collection]?.columns?.keys
+@@ -74 +75 @@
+-                .columns.map { DSL.field(DSL.name(effectiveAlias, it.name)) }
++                .map { DSL.field(DSL.name(effectiveAlias, it)) }
+@@ -111 +112 @@
+-                    DSL.table(tojOOQName(relationship.target_collection))
++                    collectionTable(relationship.target_collection)
+@@ -146 +147,11 @@
+-        val baseSelection = baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
++        // MySQL 5.7 cannot reference an outer row from inside a derived table.
++        // Object relationships without pagination can aggregate directly over the target.
++        val directRelationship = parentRelationship != null && parentTable != null &&
++            request.query.limit == null && request.query.offset == null && request.query.order_by == null
++        val baseSelection = if (directRelationship) baseTable
++            else baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
++        val relationshipPredicate = if (directRelationship) DSL.and(
++            mkJoinWhereClause(parentTable!!, parentRelationship!!, effectiveAlias),
++            request.query.predicate?.let { expressionToConditionWithSqlAlias(it, request, effectiveAlias) }
++                ?: DSL.noCondition()
++        ) else DSL.noCondition()
+@@ -226 +237 @@
+-                            )
++                            ).where(relationshipPredicate)
+@@ -248 +259 @@
+-                            )
++                            ).where(relationshipPredicate)
+@@ -437 +448 @@
+-                                    DSL.table(tojOOQName(relationship.target_collection))
++                                    collectionTable(relationship.target_collection)
+@@ -560 +571 @@
+-            DSL.table(tojOOQName(relationship.target_collection))
++            collectionTable(relationship.target_collection)

@@ -1,0 +1,18 @@
+{
+  "time_record": {
+    "category": {
+      "typeName": "TimeCategory",
+      "collection": "time_record_category",
+      "sourceField": "id",
+      "targetField": "recordId",
+      "nativeSql": "connector/time-record-category.sql",
+      "outputFields": ["id", "name"],
+      "fields": {
+        "recordId": {"column": "record_id", "kind": "ID", "sqlType": "VARCHAR", "nullable": false},
+        "userId": {"column": "user_id", "kind": "ID", "sqlType": "BIGINT", "nullable": false},
+        "id": {"column": "id", "kind": "ID", "sqlType": "BIGINT", "nullable": false},
+        "name": {"column": "name", "kind": "TEXT", "sqlType": "VARCHAR", "nullable": true}
+      }
+    }
+  }
+}

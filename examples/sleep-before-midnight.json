@@ -1,0 +1,3 @@
+{
+  "query": "query { timeRecords(where: { date: { _gte: \"2026-10-01\", _lt: \"2026-11-01\" }, startTime: { _eq: 0 }, category: { name: { _eq: \"休息\" } } }, orderBy: [{ date: Asc }], limit: 100) { date startTime endTime category { id name } } }"
+}
