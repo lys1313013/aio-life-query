@@ -1,12 +1,14 @@
 # Docker 打包与 GitHub Actions
 
-沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为自有 Java 网关 `aio-life-query`；Hasura 和 MySQL Connector 保持独立镜像与配置，不能混入网关镜像。
+文档核对日期：2026-10-18。按当前 Dockerfile、Compose 和工作流核对；本次未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
+
+沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为提供 REST / GraphQL HTTP / MCP 的自有 Java 网关 `aio-life-query`；Hasura 和 MySQL Connector 保持独立镜像与配置，不能混入网关镜像。
 
 ## Docker 文件
 
 | 文件 | 用途 |
 |---|---|
-| `Dockerfile` | 本地从源码构建，编译使用构建机原生平台与 Maven 缓存 |
+| `Dockerfile` | 本地从源码构建，编译使用构建机原生平台与 Maven 缓存；打包跳过测试，需另行验证 |
 | `Dockerfile.runtime` | CI 打包已通过测试的 JAR，避免为每个架构重新编译 |
 | `.dockerignore` | 网关构建上下文只包含 `pom.xml` 和 `src` |
 | `deploy/connector.Dockerfile.dockerignore` | Connector 构建上下文只包含已编译 Quarkus 运行文件 |
@@ -25,8 +27,9 @@ bash scripts/smoke_image.sh aio-life-query:local
 复用已测试的 JAR 构建：
 
 ```bash
-# Redis 测试需要真实 Redis；端口必须指向隔离测试实例。
-AIO_QUERY_TEST_REDIS_PORT=6379 mvn -B -ntp verify -DfailIfNoTests=true
+# Redis 测试需要 127.0.0.1 上的隔离无密码实例，将 16379 替换为其端口。
+AIO_QUERY_TEST_REDIS_PORT=16379 mvn -B -ntp verify -DfailIfNoTests=true
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 bash scripts/prepare_image_context.sh .cache/image-context
 docker build -t aio-life-query:local .cache/image-context
 bash scripts/smoke_image.sh aio-life-query:local
@@ -45,11 +48,11 @@ bash scripts/smoke_image.sh aio-life-query:local
 | push → `v*` 标签 | 上述检查成功后发布；版本标签使用 `v0.1.0` 等 SemVer 格式 |
 | 手动运行 | 所选 ref 完成检查；只有 `main` 或 `v*` 标签执行发布 |
 
-工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试任务包含 Java 测试及 Python 元数据文件权限、原子替换和失败恢复测试；发现失败、缺少 Java 报告或 Java 跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64。
+工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试任务包含 Java 测试及 Python 元数据文件权限、原子替换、失败恢复、六数据集字段授权和分类关系权限测试；发现失败、缺少 Java 报告或 Java 跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64，工作流没有逐架构运行冒烟检查。
 
 此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 MySQL 的完整隔离验收仍使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
 
-发布镜像默认是 `ghcr.io/<owner>/<repository>`，名称转为小写。GHCR 使用工作流的 `GITHUB_TOKEN`，仅发布任务拥有 `packages: write` 权限，不需要另建 GHCR 密钥。
+发布镜像默认是 `ghcr.io/<owner>/<repository>`，名称转为小写；当前仓库对应 `ghcr.io/lys1313013/aio-life-query`，这是工作流目标名称，不表示已核实镜像存在。GHCR 使用工作流的 `GITHUB_TOKEN`，仅发布任务拥有 `packages: write` 权限，不需要另建 GHCR 密钥。
 
 镜像标签：
 
@@ -82,14 +85,25 @@ bash scripts/smoke_image.sh aio-life-query:local
 - `AIO_QUERY_CONNECTOR_IMAGE`：默认 `aio-life-query-mysql-connector:local`，可指定独立维护并验收的 Connector 镜像。
 - `AIO_QUERY_ENGINE_IMAGE`：必须显式指定已验证的引擎镜像，原有要求保持不变。
 
-部署主机先注入原有服务密钥、只读 JDBC 和 Redis 配置，并生成受保护元数据。Connector/Hasura 需要预先准备，网关替换示例：
+部署主机先注入服务密钥、只读 JDBC、Redis 配置和 `AIO_QUERY_CONFIG_GID`，并生成受保护元数据；完整变量见 [README](../README.md#运行环境变量)。Connector/Hasura 需要预先准备，网关替换示例（在本仓库根目录执行）：
 
 ```bash
-export AIO_QUERY_GATEWAY_IMAGE='ghcr.io/<owner>/aio-life-query@sha256:<digest>'
+export AIO_QUERY_GATEWAY_IMAGE='ghcr.io/lys1313013/aio-life-query@sha256:<digest>'
 docker compose -f deploy/compose.yml pull gateway
 docker compose -f deploy/compose.yml up -d --no-build gateway
 ```
 
 启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时显式执行 `docker compose -f deploy/compose.yml build gateway mysql-connector`；Connector 编译产物须先通过原有脚本准备。GitHub Actions 只构建及推送镜像，没有 SSH 部署或自动修改生产服务。
 
-当前 `aio-life-query` 为无远程地址的本地独立仓库。将配置提交并推送到对应 GitHub 仓库后才会触发 Actions；本地语法和容器验证不能替代实际 GitHub 运行结果。Hasura 生产源码镜像与 Connector 授权边界仍见主 README。
+### 升级字段和分类关系
+
+当前时迹为 `time-record-v3`，其他五个数据集为 v2，包含六表 111 个物理字段及 `time_record.category` 关系。升级旧版本时按以下顺序准备：
+
+1. 核对目标表结构，按 `deploy/readonly-account.sql.example` 更新现有账号的列级 GRANT，包含分类表 `time_tracker_category` 的五列；已有账号不重复执行 `CREATE USER`。
+2. 使用当前 `connector/mysql-readonly.patch` 重新构建 Connector。脚本若报告补丁指纹变化，先移走旧 `.cache/connector-source` 后再构建；复用旧运行目录不会自动应用新补丁。
+3. 使用当前配置执行 `python3 scripts/build_metadata.py`。默认输出为 `.cache/hasura/`，Compose 从此处读取；目录 `0750`、文件 `0640`，容器附加组必须有读取权限。每个文件独立原子替换，整个配置包不是一次事务；生成失败后修复并完整重跑，再重启相关服务。
+4. 部署匹配的 Connector、Hasura 元数据和网关镜像，并重新验证实际查询；REST / MCP 客户端重新读取目录版本。仅替换网关镜像不能完成本次字段及关系升级。
+
+Compose 只将网关 `45680` 绑定宿主回环地址。由 HTTPS 代理转发 `/api/v1/`、`/graphql` 和 `/mcp`，不公开 `/internal/hasura/auth`、管理端点、Redis、Hasura 或 Connector。
+
+当前独立仓库已配置 `origin=git@github.com:lys1313013/aio-life-query.git`。符合上述事件条件的推送才会触发工作流；本次仅核对本地配置，没有查询远程运行、Secrets、Package 可见性或镜像 digest。实际发布结果以对应 GitHub Actions 运行和仓库中的镜像为准。Hasura 生产源码镜像与 Connector 授权边界见 [README](../README.md#固定的上游来源)。
