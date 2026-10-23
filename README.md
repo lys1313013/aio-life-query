@@ -183,7 +183,7 @@ REST / MCP 查询文档只允许一个具名 query，`operationName` 必须与�
 
 ### 按分类名称查询时迹
 
-`timeRecords` 支持 `category { id name }` 和 `where.category.id/name._eq`；`timeRecordStats` 支持同样的分类筛选。下面按约定以 `startTime = 0` 筛选零点前睡觉的记录：
+`timeRecords` 支持 `category { id name }` 和 `where.category.id/name._eq`；`timeRecordStats` 支持同样的分类筛选。下面以 `startTime = 0` 筛选从零点开始的“休息”片段。这只能说明该片段覆盖零点，不能证明实际入睡时间早于零点：
 
 ```graphql
 query {
