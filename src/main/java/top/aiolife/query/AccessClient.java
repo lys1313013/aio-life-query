@@ -43,14 +43,11 @@ public class AccessClient {
         return new Access(data.path("userId").asText(), data.path("appId").asText(), data.path("credentialId").asText(),
                 data.path("credentialType").asText(), data.path("expiresAt").asLong());
     }
-    /** 授权服务滚动切换响应协议时兼容两种格式；同时出现但不一致必须拒绝。 */
     private String businessCode(JsonNode body) {
         if (body == null || !body.isObject()) return null;
-        JsonNode modern = body.get("code"), legacy = body.get("rscode");
-        if (modern != null && (!modern.isIntegralNumber() || !modern.canConvertToInt())) throw QueryException.denied();
-        if (legacy != null && !legacy.isTextual()) throw QueryException.denied();
-        if (modern != null && legacy != null && !modern.asText().equals(legacy.asText())) throw QueryException.denied();
-        return modern != null ? modern.asText() : legacy == null ? null : legacy.asText();
+        JsonNode code = body.get("code");
+        if (body.has("rscode") || code == null || !code.isIntegralNumber() || !code.canConvertToInt())
+            throw QueryException.denied();
+        return code.asText();
     }
-
 }

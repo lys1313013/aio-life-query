@@ -40,7 +40,7 @@ sequenceDiagram
 ```
 
 - 用户使用现有 AIO Life 登录 Token 或 API Key；REST、GraphQL HTTP 和 MCP 均从 `Authorization: Bearer ...` 读取，不能从工具参数指定身份或角色。公网入口拒绝 `X-Hasura-*`。
-- 每次请求直接调用 AIO Life 的内部 `check-token`，网关不解析 JWT、不共享 AIO Life Redis、不缓存认证结果。授权客户端兼容后端旧版字符串 `rscode` 和新版数字 `code`，同时出现且不一致时拒绝。接口经过原有 Sa-Token / API Key 拦截器，并且必须提供独立服务密钥；固定应用 `aio-life-query`，按数据集返回固定角色和读取范围（时迹仍为 `ai_time_reader` / `time.read`）。目录发现使用 `ai_query_catalog` / `query.catalog`，不授予 Hasura 数据读取权限。没有新增逐应用用户授权记录；当前查询能力由功能开关、有效凭据和二级锁共同控制。
+- 每次请求直接调用 AIO Life 的内部 `check-token`，网关不解析 JWT、不共享 AIO Life Redis、不缓存认证结果。授权客户端仅接收后端当前数字 `code`，拒绝旧 `rscode` 信封。接口经过原有 Sa-Token / API Key 拦截器，并且必须提供独立服务密钥；固定应用 `aio-life-query`，按数据集返回固定角色和读取范围（时迹仍为 `ai_time_reader` / `time.read`）。目录发现使用 `ai_query_catalog` / `query.catalog`，不授予 Hasura 数据读取权限。没有新增逐应用用户授权记录；当前查询能力由功能开关、有效凭据和二级锁共同控制。
 - AIO Life 检查 `/mcp/tools` 和对应业务菜单的二级锁；时迹仍检查 `/time/time-tracker`、`/time/dashboard`，其他数据集分别检查 `/record/exercise`、`/record/read`、`/record/movie`、`/record/videoWatch`、`/record/performance`。锁定的数据集不出现在目录中，直接描述或执行同样拒绝；会话退出、账号删除、API Key 删除/过期和重新锁定均影响后续执行。默认关闭整个查询授权功能。
 - 明细与聚合共用 Hasura 行权限，均剔除其他用户和逻辑删除记录。`userId` / `isDeleted` 也可读取和筛选，但用户条件与服务端行权限取交集，不能切换用户或读取已删除记录。
 - MySQL 账号只授予六张已发布业务表各列和分类关系所需五列的 SELECT（见 `deploy/readonly-account.sql.example`），不开放账号、密码、Token 等其他表。六张表的所有物理字段均开放，包括标题、描述、笔记、座位、订单号以及审计字段。Connector 禁用 mutation、explain、请求级连接地址覆盖，保留单一配置数据源。
@@ -104,7 +104,7 @@ curl "$AIO_QUERY_URL/api/v1/queries/execute" \
 
 ### MCP
 
-使用官方 Java SDK `0.14.0` 的无会话 WebMVC Streamable HTTP 传输，与现有 AIO Life SDK 版本一致。入口为 `https://<query-host>/mcp`；经验证的初始化协议为 `2025-06-18`。服务端允许直接调用 `tools/list` / `tools/call`，无需先调用 `initialize`；保留初始化接口兼容旧客户端。这不代表已升级到 MCP `2026-07-28`。GET 不提供 SSE 常驻连接，HTTP POST 返回 JSON-RPC，通知返回 202。无 OAuth 登录跳转；客户端必须支持自定义 Bearer 请求头。每个 HTTP 请求（包括 initialize、tools/list）重新认证，不把 session id 当成身份。
+使用官方 Java SDK `0.14.0` 的无会话 WebMVC Streamable HTTP 传输，与现有 AIO Life SDK 版本一致。入口为 `https://<query-host>/mcp`；经验证的初始化协议为 `2025-06-18`。服务端允许直接调用 `tools/list` / `tools/call`，无需先调用 `initialize`；按 MCP 协议提供 initialize 握手接口。这不代表已升级到 MCP `2026-07-28`。GET 不提供 SSE 常驻连接，HTTP POST 返回 JSON-RPC，通知返回 202。无 OAuth 登录跳转；客户端必须支持自定义 Bearer 请求头。每个 HTTP 请求（包括 initialize、tools/list）重新认证，不把 session id 当成身份。
 
 | 工具 | 参数 / 用途 |
 |---|---|

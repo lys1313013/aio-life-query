@@ -22,10 +22,10 @@ class DatasetAccessClientTest {
         return Map.of("userId","9007199254740993","appId","aio-life-query","role",role,"scopes",List.of(scope),"credentialId","a".repeat(32),"credentialType","login","expiresAt",Long.MAX_VALUE);
     }
     @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","performance"})
-    void roleAndScopeMustMatchTheRequestedDatasetForBothResponseFormats(String name) {
+    void roleAndScopeMustMatchTheRequestedDataset(String name) {
         var dataset=QueryDatasets.named(name);
-        for(String format:List.of("legacy","modern")) {
-            var body=json.createObjectNode();if(format.equals("legacy")) body.put("rscode","0");else body.put("code",0);
+        {
+            var body=json.createObjectNode().put("code",0);
             body.set("data",json.valueToTree(decision(dataset.role(),dataset.scope())));
             when(http.post(any(),anyMap(),eq(Map.of("dataset",name)),anyInt(),anyInt())).thenReturn(new BoundedHttp.Response(200,body));
             assertEquals("9007199254740993",client.evaluate("token",name).userId());
@@ -34,7 +34,7 @@ class DatasetAccessClientTest {
         }
     }
     @Test void malformedMissingOrConflictingCodesNeverAuthorizeAndModernLocksArePreserved() throws Exception {
-        for(String raw:List.of("{\"code\":\"0\"}","{\"code\":0.1}","{}","{\"code\":0,\"rscode\":\"2001\"}")) {
+        for(String raw:List.of("{\"code\":\"0\"}","{\"code\":0.1}","{}","{\"rscode\":\"0\"}","{\"code\":0,\"rscode\":\"2001\"}")) {
             var body=(com.fasterxml.jackson.databind.node.ObjectNode)json.readTree(raw);
             body.set("data",json.valueToTree(decision("ai_movie_reader","movie.read")));
             when(http.post(any(),anyMap(),any(),anyInt(),anyInt())).thenReturn(new BoundedHttp.Response(200,body));
