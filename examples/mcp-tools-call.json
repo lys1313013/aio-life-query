@@ -5,15 +5,12 @@
   "params": {
     "name": "aio_query_execute",
     "arguments": {
-      "domain": "time",
-      "schemaVersion": "time-record-v3",
-      "policyVersion": "time-record-v3",
-      "operationName": "Recent",
       "query": "query Recent($start:String!,$end:String!){timeRecords(where:{date:{_gte:$start,_lt:$end}},limit:100){id date categoryId durationMinutes}}",
       "variables": {
         "start": "2026-09-01",
         "end": "2026-10-01"
-      }
+      },
+      "expectedRelease": "time-record-v3"
     }
   }
 }

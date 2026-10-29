@@ -55,9 +55,23 @@ class LifeDatasetServiceTest {
         assertEquals(5,catalog.size());
         for(var entry:catalog) {
             assertNotEquals("movie",entry.path("name").asText());
-            assertEquals(366,entry.path("maxDateRangeDays").asInt());
+            assertFalse(entry.has("graphqlSdl"));
+            assertFalse(entry.has("fields"));
+            assertTrue(entry.has("description"));
         }
         assertThrows(QueryException.class,()->service.catalog("token","movie"));
+    }
+
+    @Test void describeProvidesOnlyTheSelectedSchemaAndExecutableConstraints() {
+        when(access.evaluate("token", "catalog")).thenReturn(user);
+        when(access.evaluate("token", "read_record")).thenReturn(user);
+        var detail = json.valueToTree(service.catalog("token", "read_record"));
+        assertTrue(detail.has("graphqlSdl"));
+        assertEquals("read-record-v2", detail.path("releaseId").asText());
+        assertEquals(4, detail.at("/fields/status/values").size());
+        assertEquals(10000, detail.at("/limits/maxOffset").asInt());
+        assertFalse(detail.has("schemaVersion"));
+        assertFalse(detail.has("policyVersion"));
     }
 
     @Test void currencyStaysExactAndUndeclaredFieldsAreRejected() throws Exception {

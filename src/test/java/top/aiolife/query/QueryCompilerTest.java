@@ -21,6 +21,19 @@ class QueryCompilerTest {
         return "query Q { timeRecords(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}) { " + selection + " } }";
     }
 
+    @Test void minimalRequestInfersDatasetAndAcceptsAnonymousQueries() {
+        String source = query("id").replace("query Q", "");
+        var resolved = compiler.resolve(new QueryCompiler.QueryRequest(source, null, null));
+        var plan = compiler.compile(resolved);
+        assertEquals("time_record", plan.dataset());
+        assertEquals(100, plan.limit());
+        var stale = assertThrows(QueryException.class, () -> compiler.resolve(
+                new QueryCompiler.QueryRequest(source, null, "outdated-release")));
+        assertEquals("SCHEMA_CHANGED", stale.code());
+        assertDoesNotThrow(() -> compiler.compile(compiler.resolve(
+                new QueryCompiler.QueryRequest(source, null, QueryProperties.RELEASE))));
+    }
+
     @Test void normalizesVariablesAliasesAndStablePagination() {
         var vars = json.createObjectNode().put("start", "2026-09-01").put("end", "2026-10-01").put("n", 2);
         var plan = compiler.compile(request("query Q($start:String!,$end:String!,$n:Int!){ rows:timeRecords(where:{date:{_gte:$start,_lt:$end}},limit:$n){ recordId:id categoryId durationMinutes } }", vars));

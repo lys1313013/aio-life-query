@@ -124,11 +124,11 @@ curl "$AIO_QUERY_URL/api/v1/queries/execute" \
   --data-binary @examples/time-record-query.json
 ```
 
-[examples/](examples/) 中的日期是固定示例，调用前按需调整。REST / MCP 查询必须提供目录返回的 `domain`、`schemaVersion`、`policyVersion`，并让 `operationName` 与唯一具名 query 一致；版本不一致时重新读取目录。
+[examples/](examples/) 中的日期是固定示例，调用前按需调整。REST / MCP 查询仅 `query` 必填，支持匿名或唯一具名 query；`variables` 按需提供。数据集与操作名由查询推导，可用详情中的 `releaseId` 填写 `expectedRelease` 防止跨版本执行；不匹配时重新读取该数据集详情。旧 `domain/schemaVersion/policyVersion/operationName` 入参不再接受。目录只含摘要，字段、SDL、枚举、限制与示例在单数据集详情中按需读取。
 
 ### GraphQL HTTP
 
-请求 JSON 包含 `query`，可选 `operationName`、`variables`；`extensions` 仅接受空对象或 `null`。支持匿名或单个命名 query，数据集和版本由根字段确定，无需 REST 的版本参数：
+请求 JSON 包含 `query`，可选 `operationName`、`variables`；`extensions` 仅接受空对象或 `null`。支持匿名或单个命名 query，数据集由根字段推导并使用当前版本；此入口不接受 `expectedRelease`：
 
 ```bash
 curl "$AIO_QUERY_URL/graphql" \
@@ -147,8 +147,8 @@ curl "$AIO_QUERY_URL/graphql" \
 | 工具 | 参数 / 用途 |
 | --- | --- |
 | `aio_query_list_datasets` | `{}`，发现可用数据集 |
-| `aio_query_describe_dataset` | `{ "name": "time_record" }`，读取 SDL 和版本 |
-| `aio_query_validate` | 与 REST 查询请求相同，预检 |
+| `aio_query_describe_dataset` | `{ "name": "time_record" }`，读取 SDL、releaseId、字段和限制 |
+| `aio_query_validate` | 与 REST 查询请求相同，可选预检，普通查询可直接执行 |
 | `aio_query_execute` | 与 REST 查询请求相同，执行 |
 
 客户端配置示意，凭据由客户端安全注入，不写入提示词、工具参数或版本库：
@@ -172,7 +172,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 完整字段、类型和语义以 [datasets.json](src/main/resources/datasets.json) 及描述接口返回的 SDL 为准，避免在客户端硬编码字段目录。
 
-| 数据集 | domain | schemaVersion / policyVersion | 明细 / 汇总根字段 | 日期范围字段 |
+| 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
 | --- | --- | --- | --- | --- |
 | `time_record` | `time` | `time-record-v3` | `timeRecords` / `timeRecordStats` | `date` |
 | `exercise_record` | `exercise` | `exercise-record-v2` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |

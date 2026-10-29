@@ -41,17 +41,16 @@ public class QueryMcpConfiguration {
             WebMvcStatelessServerTransport transport, QueryService service, ObjectMapper json,
             JacksonMcpJsonMapper protocolJson) {
         var queryProperties = Map.<String, Object>of(
-                "domain", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::domain).toList()),
-                "schemaVersion", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::release).toList()),
-                "policyVersion", Map.of("type", "string", "enum", QueryDatasets.all().stream().map(QueryDatasets.Dataset::release).toList()),
-                "operationName", Map.of("type", "string", "minLength", 1),
-                "query", Map.of("type", "string", "minLength", 1, "maxLength", 32768),
-                "variables", Map.of("type", "object"));
-        var required = List.of("domain", "schemaVersion", "policyVersion", "operationName", "query");
+                "query", Map.of("type", "string", "minLength", 1, "maxLength", 32768,
+                        "description", "唯一的只读 GraphQL query，可省略操作名称；数据集由根字段推导"),
+                "variables", Map.of("type", "object", "description", "查询使用变量时提供"),
+                "expectedRelease", Map.of("type", "string", "minLength", 1,
+                        "description", "可选，来自数据集详情 releaseId；版本不匹配时拒绝执行"));
+        var required = List.of("query");
         return McpServer.sync(transport).serverInfo("aio-life-query", "0.1.0")
                 .jsonMapper(protocolJson)
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                .instructions("先读取授权数据集结构，再预检并执行受限只读 GraphQL。身份只由 HTTP Bearer 凭据确定。")
+                .instructions("按需发现数据集并读取目标结构，随后执行只读 GraphQL。已读结构可复用；validate 仅用于复杂查询预检或排错。身份只由 HTTP Bearer 凭据确定。")
                 .tools(List.of(
                         tool("aio_query_list_datasets", "读取当前用户可用的数据集目录", Map.of(), List.of(), json,
                                 (token, args) -> service.catalog(token, null)),
@@ -70,8 +69,8 @@ public class QueryMcpConfiguration {
         return transport.getRouterFunction();
     }
 
-    private static QueryCompiler.Request request(ObjectMapper json, Map<String, Object> args) {
-        try { return json.convertValue(args, QueryCompiler.Request.class); }
+    private static QueryCompiler.QueryRequest request(ObjectMapper json, Map<String, Object> args) {
+        try { return json.convertValue(args, QueryCompiler.QueryRequest.class); }
         catch (IllegalArgumentException error) { throw QueryException.invalid(); }
     }
 

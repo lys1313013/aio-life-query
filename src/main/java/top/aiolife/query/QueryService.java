@@ -11,6 +11,8 @@ import java.util.LinkedHashMap;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Map;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -44,7 +46,8 @@ public class QueryService {
                 if (error.status() == 403) continue;
                 throw error;
             }
-            available.add(describe(dataset));
+            available.add(Map.of("name", dataset.name(), "description", dataset.description(),
+                    "capabilities", List.of("details", "aggregate")));
         }
         audit.write(UUID.randomUUID().toString(), user, "CATALOG_READ", null, 0, "catalog");
         return available;
@@ -53,10 +56,35 @@ public class QueryService {
     private Object describe(QueryDatasets.Dataset dataset) {
         var output = new LinkedHashMap<String, Object>();
         output.put("name", dataset.name()); output.put("domain", dataset.domain());
-        output.put("description", dataset.description()); output.put("schemaVersion", dataset.release());
-        output.put("policyVersion", dataset.release()); output.put("graphqlSdl", dataset.sdl());
+        output.put("description", dataset.description()); output.put("releaseId", dataset.release());
+        output.put("graphqlSdl", dataset.sdl());
         output.put("maxDateRangeDays", QueryProperties.MAX_DATE_RANGE_DAYS); output.put("maxRows", 1000);
         output.put("rangeFields", dataset.rangeFields()); output.put("queryExample", dataset.example());
+        output.put("limits", Map.of("maxOffset", 10000, "defaultLimit", 100, "defaultOffset", 0,
+                "maxOrderBy", 3, "maxRoots", 1, "maxOperations", 1, "maxQueryBytes", 32768));
+        output.put("unsupported", List.of("fragment", "directive", "introspection", "mutation",
+                "subscription", "OR", "groupBy", "fuzzySearch"));
+        output.put("rangeSemantics", "rangeFields 中至少一个字段必须有 _gte（含）/_lt（不含）；日期 YYYY-MM-DD，本地时间不带时区，最长 366 天");
+        output.put("defaultOrder", dataset.rangeFields().getFirst() + " Desc, id Asc");
+        var fields = new LinkedHashMap<String, Object>();
+        dataset.fields().forEach((name, field) -> {
+            var info = new LinkedHashMap<String, Object>();
+            info.put("type", field.apiType()); info.put("kind", field.kind());
+            info.put("filterOperators", switch (field.kind()) {
+                case "DATE", "DATETIME" -> List.of("_gte", "_lt");
+                case "INT", "DECIMAL" -> List.of("_eq", "_gte", "_lte");
+                case "JSON" -> List.of();
+                default -> List.of("_eq");
+            });
+            if ("STATUS".equals(field.kind())) info.put("values", List.of("not_started", "in_progress", "completed", "on_hold"));
+            if ("ID".equals(field.kind())) info.put("description", "字符串标识符，保留精度，不转换为数字");
+            if ("time_record".equals(dataset.name()) && Set.of("startTime", "endTime").contains(name))
+                info.put("description", "当天分钟数，0=00:00，1439=23:59，闭区间端点");
+            if (name.equals("durationMinutes")) info.put("unit", "分钟");
+            if (name.equals("ticketPrice")) info.put("unit", "元");
+            fields.put(name, info);
+        });
+        output.put("fields", fields);
         return output;
     }
 
@@ -68,7 +96,15 @@ public class QueryService {
         audit.write(UUID.randomUUID().toString(), user, event, null, 0, dataset.name());
     }
 
-    public Object validate(String token, QueryCompiler.Request request) {
+    public Object validate(String token, QueryCompiler.QueryRequest request) {
+        return validate(token, compiler.resolve(request));
+    }
+
+    public Object execute(String token, QueryCompiler.QueryRequest request) {
+        return execute(token, compiler.resolve(request));
+    }
+
+    Object validate(String token, QueryCompiler.Request request) {
         var dataset = QueryDatasets.domain(request.domain());
         var user = authority(token, dataset); store.rate(user.userId()); compiler.compile(request);
         audit(user, "VALIDATED", dataset);
@@ -82,7 +118,7 @@ public class QueryService {
         return Map.of("data", data, "extensions", result);
     }
 
-    public Object execute(String token, QueryCompiler.Request request) {
+    Object execute(String token, QueryCompiler.Request request) {
         // 未认证及限流拒绝不能触发同步落盘，避免绕过准入限制消耗审计资源。
         var dataset = QueryDatasets.domain(request.domain());
         var user = authority(token, dataset);

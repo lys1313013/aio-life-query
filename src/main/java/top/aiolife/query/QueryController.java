@@ -33,12 +33,12 @@ public class QueryController {
     }
 
     @PostMapping("/api/v1/queries/validate")
-    public Object validate(@RequestHeader(value = "Authorization", required = false) String auth, @RequestBody QueryCompiler.Request body) {
+    public Object validate(@RequestHeader(value = "Authorization", required = false) String auth, @RequestBody QueryCompiler.QueryRequest body) {
         return success(service.validate(bearer(auth), body));
     }
 
     @PostMapping("/api/v1/queries/execute")
-    public Object execute(@RequestHeader(value = "Authorization", required = false) String auth, @RequestBody QueryCompiler.Request body) {
+    public Object execute(@RequestHeader(value = "Authorization", required = false) String auth, @RequestBody QueryCompiler.QueryRequest body) {
         return success(service.execute(bearer(auth), body));
     }
 

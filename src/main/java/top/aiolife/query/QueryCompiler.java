@@ -47,6 +47,9 @@ import java.util.Set;
 public class QueryCompiler {
     private final ObjectMapper json;
     private final Map<String, GraphQLSchema> schemas = new HashMap<>();
+    /** 外部请求只描述查询；数据集与操作名由唯一根查询推导。 */
+    public record QueryRequest(String query, ObjectNode variables, String expectedRelease) {}
+    /** 内部规范化请求，不作为 HTTP / MCP 入参。 */
     public record Request(String domain, String schemaVersion, String policyVersion,
                           String operationName, String query, ObjectNode variables) {}
     public record GraphqlRequest(String query, String operationName, ObjectNode variables, ObjectNode extensions) {}
@@ -74,6 +77,15 @@ public class QueryCompiler {
     }
 
     public String sdl() { return QueryDatasets.named("time_record").sdl(); }
+
+    public Request resolve(QueryRequest request) {
+        if (request == null) throw QueryException.invalid();
+        Request resolved = graphqlRequest(new GraphqlRequest(request.query(), null, request.variables(), null));
+        if (request.expectedRelease() != null && !request.expectedRelease().equals(resolved.schemaVersion())) {
+            throw new QueryException("SCHEMA_CHANGED", 409, "数据集版本已变化，请重新读取该数据集详情");
+        }
+        return resolved;
+    }
 
     /** HTTP GraphQL 使用当前发布版本，仍交由 compile 校验同一只读子集。 */
     public Request graphqlRequest(GraphqlRequest request) {
@@ -174,10 +186,10 @@ public class QueryCompiler {
                 } else {
                     requireObject(comparison, Set.of("_eq"));
                     String literal = text(comparison.get("_eq"), "ID".equals(field.kind()) ? 64 : 1000);
-                    if ("STATUS".equals(field.kind()) && !Set.of("not_started", "in_progress", "completed", "on_hold").contains(literal)) throw QueryException.invalid();
+                    if ("STATUS".equals(field.kind()) && !Set.of("not_started", "in_progress", "completed", "on_hold").contains(literal)) throw new QueryException("QUERY_UNSUPPORTED", 400, "status._eq 仅支持 not_started/in_progress/completed/on_hold");
                 }
             }
-            if (!bounded) throw QueryException.invalid();
+            if (!bounded) throw new QueryException("QUERY_UNSUPPORTED", 400, "where 必须为 rangeFields 中至少一个日期字段提供 _gte/_lt 半开区间，最长 366 天");
             ObjectNode normalized = json.createObjectNode().set("where", where);
             int limit = 1;
             String definitions = "$where: " + dataset.boolType() + "!";
