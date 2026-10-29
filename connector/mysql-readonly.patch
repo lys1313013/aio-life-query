@@ -214,7 +214,7 @@
 @@ -11,0 +12,15 @@
 +
 +    // Configured static native queries are derived tables, including in relationship predicates.
-+    // This keeps read-only relationships compatible with MySQL 5.7 (no WITH clause).
++    // The same table resolution is used for projections, filters, and ordering.
 +    fun collectionTable(collection: String): org.jooq.Table<*> {
 +        val native = ConnectorConfiguration.Loader.config.nativeQueries[collection]
 +            ?: return DSL.table(DSL.name(collection.split(".")))
@@ -274,25 +274,6 @@
 @@ -111 +112 @@
 -                    DSL.table(tojOOQName(relationship.target_collection))
 +                    collectionTable(relationship.target_collection)
-@@ -146 +147,11 @@
--        val baseSelection = baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
-+        // MySQL 5.7 cannot reference an outer row from inside a derived table.
-+        // Object relationships without pagination can aggregate directly over the target.
-+        val directRelationship = parentRelationship != null && parentTable != null &&
-+            request.query.limit == null && request.query.offset == null && request.query.order_by == null
-+        val baseSelection = if (directRelationship) baseTable
-+            else baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
-+        val relationshipPredicate = if (directRelationship) DSL.and(
-+            mkJoinWhereClause(parentTable!!, parentRelationship!!, effectiveAlias),
-+            request.query.predicate?.let { expressionToConditionWithSqlAlias(it, request, effectiveAlias) }
-+                ?: DSL.noCondition()
-+        ) else DSL.noCondition()
-@@ -226 +237 @@
--                            )
-+                            ).where(relationshipPredicate)
-@@ -248 +259 @@
--                            )
-+                            ).where(relationshipPredicate)
 @@ -437 +448 @@
 -                                    DSL.table(tojOOQName(relationship.target_collection))
 +                                    collectionTable(relationship.target_collection)

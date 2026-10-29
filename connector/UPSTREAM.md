@@ -13,7 +13,7 @@
 
 `group_concat_max_len` 与 `max_execution_time` 通过连接配置初始化，保持 `allowMultiQueries=false`。OpenTelemetry 通过 `QUARKUS_OTEL_SDK_DISABLED=true` 在运行时关闭，见 [Quarkus 3.20 官方配置说明](https://quarkus.io/version/3.20/guides/opentelemetry/)。
 
-分类关系扩展：仅允许受控配置中无参数的静态原生查询，将其内联为派生表，覆盖关系取数、过滤和排序的表引用；不接受客户端 SQL。MySQL 查询不生成原生查询 CTE，以兼容 5.7 的语法范围。投影同时按静态查询显式列白名单校验。`time-record-category.sql` 合并公共分类与当前用户的名称覆盖，派生集合没有独立公开查询入口。
+分类关系扩展：仅允许受控配置中无参数的静态原生查询，将其内联为派生表，覆盖关系取数、过滤和排序的表引用；不接受客户端 SQL。原生查询统一通过派生表引用。投影同时按静态查询显式列白名单校验。`time-record-category.sql` 合并公共分类与当前用户的名称覆盖，派生集合没有独立公开查询入口。
 
 关系定义来自 [`relationships.json`](../src/main/resources/relationships.json)，派生 SQL 为 [`time-record-category.sql`](time-record-category.sql)。通过时迹 ID 关联，每条时迹最多一个分类；只公开 `id`、`name`，内部 `recordId` 用于 Hasura 映射，`userId` 用于行过滤。公共分类保留公共 ID，名称优先取当前用户未删除、ID 最大的覆盖；停用分类仍用于历史记录，删除、缺失或其他用户私有分类不返回。名称精确筛选可匹配多个同名分类。
 
@@ -23,7 +23,7 @@
 
 在本仓库根目录执行 `bash scripts/build_connector.sh`，输出为 `.cache/connector/quarkus-app/`。脚本校验归档 SHA-256，并记录补丁 SHA-256；已有源码缓存与当前补丁不一致时直接失败，需先移走 `.cache/connector-source` 再重建。构建使用 `-x test`，成功只表示打包完成。
 
-准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → MySQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。MySQL 5.7 镜像及平台参数见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
+准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → MySQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。MySQL 版本要求见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
 
 ## 授权与引擎边界
 

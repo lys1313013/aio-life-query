@@ -204,7 +204,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 分类名称按当前用户覆盖后的有效名称匹配，同名分类均可匹配；公共分类保留公共 ID。停用分类保留历史元数据，删除、缺失或其他用户私有分类返回 `category: null`。关系来自 [relationships.json](src/main/resources/relationships.json) 和[固定派生 SQL](connector/time-record-category.sql)，无需创建数据库视图，没有独立公开根查询。
 
-分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。如需覆盖 MySQL 5.7，可设置 `AIO_QUERY_CATEGORY_MYSQL_IMAGE=mysql@sha256:4bc6bc963e6d8443453676cae56536f4b8156d78bae03c0145cbe47c2aad73bb`，ARM 主机同时设置 `AIO_QUERY_CATEGORY_MYSQL_PLATFORM=linux/amd64`。此脚本使用本地授权桩，不能代替真实后端授权验收。
+分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。MySQL 仅支持 8.x（最低 8.0.16）。此脚本使用本地授权桩，不能代替真实后端授权验收。
 
 ## 构建与本地验证
 
