@@ -15,3 +15,7 @@ GRANT SELECT (id, performance_name, performer, performance_type, performance_dat
 GRANT SELECT (id, user_id, template_id, name, is_deleted)
   ON aio_life.time_tracker_category TO 'aio_query_read'@'CONNECTOR_HOST';
 -- 升级现有只读账号时，只执行上面的 GRANT；先核对业务表和分类表的字段结构。
+
+-- 月收入模型仅需要这些源列，不授予额外表或写入权限。
+GRANT SELECT (user_id, inc_type_id, inc_date, amt, is_deleted)
+  ON aio_life.income TO 'aio_query_read'@'CONNECTOR_HOST';

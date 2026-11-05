@@ -52,6 +52,7 @@ def write_bundle(output, bundle):
 def connector_config():
     tables = []
     for dataset in DATASETS:
+        if dataset.get('nativeSql'): continue
         columns = []
         for name, field in fields(dataset).items():
             columns.append({'name':field['column'], 'description':None, 'type':field['sqlType'],
@@ -69,7 +70,11 @@ def connector_config():
                                 if field['nullable'] else {'type': 'named', 'name': field['sqlType']}
                                 for field in relation['fields'].values()},
                     'arguments': {}, 'isProcedure': False
-                } for relations in RELATIONSHIPS.values() for relation in relations.values()}}
+                } for relations in RELATIONSHIPS.values() for relation in relations.values()} | {
+                dataset['name']: {'sql': (ROOT / dataset['nativeSql']).read_text(),
+                    'columns': {field['column']: {'type':'nullable','underlying_type':{'type':'named','name':field['sqlType']}} if field['nullable'] else {'type':'named','name':field['sqlType']} for field in dataset['fields'].values()},
+                    'arguments': {}, 'isProcedure': False}
+                for dataset in DATASETS if dataset.get('nativeSql')}}
 
 def build(connector_url, connector_key):
     scalar_types = {}
@@ -80,7 +85,8 @@ def build(connector_url, connector_key):
             ops.update({op:{'type':'custom','argument_type':{'type':'named','name':name}} for op in ['_gte','_lt','_lte']})
         scalar_types[name] = {'representation':{'type':representation}, 'comparison_operators':ops, 'aggregate_functions':{}}
     for name, result in [('INT32','INT64'), ('BIGDECIMAL','BIGDECIMAL')]:
-        scalar_types[name]['aggregate_functions']['sum'] = {'result_type':{'type':'named','name':result}}
+        for function in ['sum', 'max', 'min']:
+            scalar_types[name]['aggregate_functions'][function] = {'result_type':{'type':'named','name':result}}
     schema = {'scalar_types':scalar_types, 'object_types':{}, 'collections':[], 'functions':[], 'procedures':[]}
     for dataset in DATASETS:
         ndc_fields = {}
@@ -121,9 +127,10 @@ def build(connector_url, connector_key):
             'logicalOperators':{'enable':False}, 'isNull':{'enable':False}, 'graphql':{'typeName':name}}))
     for name, api, ndc, result in [('IntSum','Int','INT32','BigInt'), ('DecimalSum','BigDecimal','BIGDECIMAL','BigDecimal')]:
         objects.append(obj('AggregateExpression', {'name':name,'operand':{'scalar':{'aggregatedType':api,
-            'aggregationFunctions':[{'name':'sum','returnType':result}],
-            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'mysql','dataConnectorScalarType':ndc,'functionMapping':{'sum':{'name':'sum'}}}]}},
+            'aggregationFunctions':[{'name':function,'returnType':result} for function in ['sum','max','min']],
+            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'mysql','dataConnectorScalarType':ndc,'functionMapping':{function:{'name':function} for function in ['sum','max','min']}}]}},
             'count':{'enable':False},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
+    objects.append(obj('AggregateExpression', {'name':'DateDistinct','operand':{'scalar':{'aggregatedType':'String','aggregationFunctions':[],'dataConnectorAggregationFunctionMapping':[]}}, 'count':{'enable':False},'countDistinct':{'enable':True},'graphql':{'selectTypeName':'DateDistinctStats'}}))
     for dataset in DATASETS:
         name = dataset['typeName']; model = name+'Model'; all_fields = fields(dataset)
         objects.append(obj('ObjectType', {'name':name,'graphql':{'typeName':name},
@@ -135,7 +142,7 @@ def build(connector_url, connector_key):
             'comparableRelationships':[{'relationshipName':key, 'booleanExpressionType': relation['typeName']+'BoolExp'}
                 for key, relation in RELATIONSHIPS.get(dataset['name'], {}).items()]}}, 'logicalOperators':{'enable':False},'isNull':{'enable':False},'graphql':{'typeName':name+'BoolExp'}}))
         objects.append(obj('AggregateExpression', {'name':name+'Aggregate','operand':{'object':{'aggregatedType':name,
-            'aggregatableFields':[{'fieldName':key,'aggregateExpression':'DecimalSum' if dataset['fields'][key]['kind']=='DECIMAL' else 'IntSum'} for key in dataset['aggregateFields']]}},
+            'aggregatableFields':[{'fieldName':key,'aggregateExpression':'DecimalSum' if dataset['fields'][key]['kind']=='DECIMAL' else 'IntSum'} for key in dataset['aggregateFields']] + [{'fieldName':key,'aggregateExpression':'DateDistinct'} for key in dataset.get('distinctFields',[])]}},
             'count':{'enable':True},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
         objects.append(obj('Model', {'name':model,'objectType':name,'source':{'dataConnectorName':'mysql','collection':dataset['name']},
             'filterExpressionType':name+'BoolExp','aggregateExpression':name+'Aggregate',

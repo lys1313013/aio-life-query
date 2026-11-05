@@ -7,8 +7,11 @@ uses a local fixture; no real credentials or business database are accessed.
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import socket
+import sys
+import shutil
 import subprocess
 import threading
 import time
@@ -52,13 +55,14 @@ def request(url, body=None, token=None):
 
 class AuthFixture(BaseHTTPRequestHandler):
     def do_POST(self):
-        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
         token = self.headers.get('Authorization')
         user = {'Bearer user-a': '101', 'Bearer user-b': '102'}.get(token)
         status = 200 if user else 401
+        dataset = next((d for d in metadata.DATASETS if d['name'] == body.get('dataset', 'time_record')), metadata.DATASETS[0])
         data = {'code': 0, 'data': {'userId': user, 'appId': 'aio-life-query',
             'credentialId': 'a' * 32, 'credentialType': 'login', 'expiresAt': int(time.time()) + 3600,
-            'role': 'ai_time_reader', 'scopes': ['time.read']}} if user else {'code': 401}
+            'role': dataset['role'], 'scopes': [dataset['scope']]}} if user else {'code': 401}
         content = json.dumps(data).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
@@ -90,7 +94,27 @@ def recording_proxy(upstream, base, prefix):
     return server
 
 
-def main():
+def main(extra_fixture='', acceptance=None):
+    candidates = [os.environ.get('AIO_QUERY_JAVA_HOME'), os.environ.get('JAVA_HOME')]
+    if sys.platform == 'darwin':
+        candidates += ['/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home',
+                       '/usr/local/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home']
+        detected = subprocess.run(['/usr/libexec/java_home', '-v', '21'], text=True, capture_output=True)
+        if detected.returncode == 0: candidates.append(detected.stdout.strip())
+    candidates.append(None)
+    java = None
+    for home in candidates:
+        candidate = str(Path(home) / 'bin/java') if home else shutil.which('java')
+        if not candidate or not Path(candidate).exists(): continue
+        version = subprocess.run([candidate, '-version'], text=True, capture_output=True)
+        major = re.search(r'version "([0-9]+)', version.stdout + version.stderr)
+        if not major or int(major.group(1)) < 21: continue
+        java = candidate
+        if home:
+            os.environ['JAVA_HOME'] = home
+            os.environ['PATH'] = str(Path(home) / 'bin') + os.pathsep + os.environ.get('PATH', '')
+        break
+    if not java: raise RuntimeError('JDK 21 or newer is required; set AIO_QUERY_JAVA_HOME')
     run_id = str(os.getpid())
     base = ROOT / '.cache' / ('category-e2e-' + run_id)
     base.mkdir(parents=True)
@@ -144,7 +168,7 @@ def main():
             time.sleep(0.5)
         assert ready, 'MySQL startup failed'
         fixture = (ROOT / 'tests/category-fixture.sql').read_text()
-        docker('exec', '-i', mysql, 'mysql', '--default-character-set=utf8mb4', '-uroot', '-pfixture-root', 'aio_life', sql=fixture)
+        docker('exec', '-i', mysql, 'mysql', '--default-character-set=utf8mb4', '-uroot', '-pfixture-root', 'aio_life', sql=fixture + '\n' + extra_fixture)
         config = base / 'metadata'
         bundle, schema = metadata.build('http://host.docker.internal:' + str(connector_proxy.server_port), key)
         auth_config = {'version': 'v4', 'definition': {'mode': {'webhook': {
@@ -153,7 +177,7 @@ def main():
                 'headers': {'additional': {'X-AIO-Webhook-Key': key}}}}}}}
         metadata.write_bundle(config, [('open_dd.json', bundle), ('auth_config.json', auth_config),
                                       ('configuration.json', metadata.connector_config()), ('ndc-schema.json', schema)])
-        start_process('connector', ['java', '-jar', str(ROOT / '.cache/connector/quarkus-app/quarkus-run.jar')], {
+        start_process('connector', [java, '-jar', str(ROOT / '.cache/connector/quarkus-app/quarkus-run.jar')], {
             'HASURA_CONFIGURATION_DIRECTORY': str(config), 'HASURA_SERVICE_TOKEN_SECRET': key,
             'JDBC_URL': 'jdbc:mysql://127.0.0.1:' + mysql_port + '/aio_life?user=fixture_read&password=fixture-read&useSSL=false&allowPublicKeyRetrieval=true',
             'QUARKUS_HTTP_HOST': '0.0.0.0', 'QUARKUS_HTTP_PORT': str(connector_port),
@@ -166,7 +190,7 @@ def main():
             '--expose-internal-errors')
         containers.append(engine)
         wait_ready('http://127.0.0.1:' + str(engine_port) + '/health')
-        start_process('gateway', ['java', '-jar', str(ROOT / 'target/aio-life-query-0.1.0-SNAPSHOT.jar')], {
+        start_process('gateway', [java, '-jar', str(ROOT / 'target/aio-life-query-0.1.0-SNAPSHOT.jar')], {
             'AIO_QUERY_PORT': str(gateway_port), 'AIO_QUERY_MANAGEMENT_PORT': '0',
             'AIO_QUERY_SERVICE_KEY': key, 'AIO_QUERY_WEBHOOK_KEY': key,
             'AIO_QUERY_ACCESS_URL': 'http://127.0.0.1:' + str(auth.server_port) + '/check-token',
@@ -209,6 +233,8 @@ def main():
         assert status == 400, rejected
         denied = subprocess.run(['docker', 'exec', mysql, 'mysql', '-ufixture_read', '-pfixture-read', 'aio_life', '-e', 'UPDATE time_record SET start_time=1'], capture_output=True)
         assert denied.returncode != 0, 'Database account unexpectedly permits writes'
+        if acceptance:
+            acceptance(query, mysql, base, url)
         print('PASS: exact query, effective category names, BIGINT strings, nested aliases/nulls, aggregates, user/deletion isolation and read-only grants')
         print('Response: ' + str(base / 'response.json'))
     finally:

@@ -29,7 +29,7 @@ public class AccessClient {
         if (response.status() >= 500) throw new QueryException("UPSTREAM_UNAVAILABLE", 503, "AIO Life 认证服务不可用");
         String code = businessCode(body);
         if ("2001".equals(code)) {
-            throw new QueryException("SECONDARY_LOCK_REQUIRED", 403, "请先在 AIO Life 解锁对应业务及 AI 工具访问");
+            throw QueryException.secondaryLock(body.path("data").path("menuPath").asText(null));
         }
         if (response.status() != 200 || body == null || !"0".equals(code)) throw QueryException.denied();
         var data = body.path("data");

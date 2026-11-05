@@ -239,9 +239,16 @@ public class QueryCompiler {
                         relationSelections.put(key, Map.copyOf(nestedFields));
                         continue;
                     }
+                    Map<String, String> functions = new LinkedHashMap<>();
+                    Set<String> allowed = dataset.aggregateFields().contains(field.getName())
+                            ? Set.of("sum", "max", "min") : Set.of("countDistinct");
                     for (var nested : field.getSelectionSet().getSelections()) {
-                        if (!(nested instanceof Field nf) || !"sum".equals(nf.getName()) || nf.getAlias() != null) throw QueryException.invalid();
+                        if (!(nested instanceof Field nf) || !allowed.contains(nf.getName())
+                                || nf.getSelectionSet() != null || !nf.getArguments().isEmpty()) throw QueryException.invalid();
+                        String nestedKey = nf.getAlias() == null ? nf.getName() : nf.getAlias();
+                        if (functions.put(nestedKey, nf.getName()) != null) throw QueryException.invalid();
                     }
+                    relationSelections.put(key, Map.copyOf(functions));
                 }
             }
             if (selected.size() > dataset.fields().size() + dataset.relations().size()) throw QueryException.invalid();

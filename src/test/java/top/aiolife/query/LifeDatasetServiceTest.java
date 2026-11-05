@@ -52,7 +52,7 @@ class LifeDatasetServiceTest {
         for(var dataset:QueryDatasets.all()) if(!dataset.name().equals("time_record")) when(access.evaluate("token",dataset.name())).thenReturn(user);
         when(access.evaluate("token","movie")).thenThrow(new QueryException("SECONDARY_LOCK_REQUIRED",403,"fixture"));
         var catalog=json.valueToTree(service.catalog("token",null));
-        assertEquals(5,catalog.size());
+        assertEquals(6,catalog.size());
         for(var entry:catalog) {
             assertNotEquals("movie",entry.path("name").asText());
             assertFalse(entry.has("graphqlSdl"));
@@ -67,7 +67,7 @@ class LifeDatasetServiceTest {
         when(access.evaluate("token", "read_record")).thenReturn(user);
         var detail = json.valueToTree(service.catalog("token", "read_record"));
         assertTrue(detail.has("graphqlSdl"));
-        assertEquals("read-record-v2", detail.path("releaseId").asText());
+        assertEquals("read-record-v3", detail.path("releaseId").asText());
         assertEquals(4, detail.at("/fields/status/values").size());
         assertEquals(10000, detail.at("/limits/maxOffset").asInt());
         assertFalse(detail.has("schemaVersion"));
@@ -85,7 +85,7 @@ class LifeDatasetServiceTest {
     }
 
     @Test void webhookUsesOnlyTheDatasetStoredInTheSingleUseTicket() {
-        when(store.consume("ticket")).thenReturn(new ExecutionStore.Ticket(user,"query","hash","movie-v2",Long.MAX_VALUE,"movie"));
+        when(store.consume("ticket")).thenReturn(new ExecutionStore.Ticket(user,"query","hash","movie-v3",Long.MAX_VALUE,"movie"));
         assertEquals(Map.of("x-hasura-role","ai_movie_reader","x-hasura-user-id",user.userId()),service.webhook("ticket"));
         verifyNoInteractions(access);
     }

@@ -10,7 +10,7 @@ spec.loader.exec_module(metadata)
 class DatasetPolicyTest(unittest.TestCase):
     def test_six_public_datasets_and_exact_field_grants(self):
         bundle, schema = metadata.build('http://fixture', 'fixture-key')
-        expected = {'time_record', 'exercise_record', 'read_record', 'movie', 'b_video', 'performance'}
+        expected = {'time_record', 'exercise_record', 'read_record', 'movie', 'b_video', 'performance', 'income_month'}
         self.assertEqual(expected | {'time_record_category'}, {table['name'] for table in schema['collections']})
         objects = bundle['subgraphs'][0]['objects']
         by_kind = lambda kind: [item['definition'] for item in objects if item['kind'] == kind]
@@ -28,6 +28,9 @@ class DatasetPolicyTest(unittest.TestCase):
                 self.assertIn('userId', permission['permissions'][0]['output']['allowedFields'])
                 self.assertIn('isDeleted', permission['permissions'][0]['output']['allowedFields'])
                 columns = [field['column'] for field in dataset['fields'].values()]
+                if dataset.get('nativeSql'):
+                    self.assertIn(dataset['name'], metadata.connector_config()['nativeQueries'])
+                    continue
                 self.assertEqual(set(columns), {column['name'] for column in tables[dataset['name']]['columns']})
                 self.assertIn('GRANT SELECT ('+', '.join(columns)+')\n  ON aio_life.'+dataset['name'], grants)
                 self.assertEqual({}, tables[dataset['name']]['fks'])

@@ -35,4 +35,14 @@ class AccessClientTest {
         assertEquals("SECONDARY_LOCK_REQUIRED", assertThrows(QueryException.class, () -> client.evaluate("session")).code());
         assertEquals(401, assertThrows(QueryException.class, () -> client.evaluate(" ")).status());
     }
+
+    @Test void preservesOnlySafeMenuPathForNormalSecondaryUnlock() throws Exception {
+        for (String path : new String[]{"/finance/income", "https://other.invalid/", "/finance/income?token=secret"}) {
+            when(http.post(any(), anyMap(), any(), anyInt(), anyInt())).thenReturn(new BoundedHttp.Response(200,
+                    new ObjectMapper().valueToTree(Map.of("code", 2001, "data", Map.of("menuPath", path)))));
+            var error = assertThrows(QueryException.class, () -> client.evaluate("session"));
+            assertEquals("SECONDARY_LOCK_REQUIRED", error.code());
+            assertEquals(path.equals("/finance/income") ? path : null, error.menuPath());
+        }
+    }
 }

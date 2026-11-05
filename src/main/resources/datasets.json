@@ -5,7 +5,7 @@
     "typeName": "TimeRecord",
     "root": "timeRecords",
     "statsRoot": "timeRecordStats",
-    "release": "time-record-v3",
+    "release": "time-record-v4",
     "role": "ai_time_reader",
     "scope": "time.read",
     "description": "当前用户未删除的完整时迹；startTime/endTime 为当天分钟数，durationMinutes 为分钟；按天记录的零点片段不一定代表零点入睡",
@@ -136,6 +136,9 @@
       "relateType",
       "userId",
       "isDeleted"
+    ],
+    "distinctFields": [
+      "date"
     ]
   },
   {
@@ -144,7 +147,7 @@
     "typeName": "ExerciseRecord",
     "root": "exerciseRecords",
     "statsRoot": "exerciseRecordStats",
-    "release": "exercise-record-v2",
+    "release": "exercise-record-v3",
     "role": "ai_exercise_reader",
     "scope": "exercise.read",
     "description": "运动记录；exerciseCount 为对应运动类型的记录数量，count 为记录条数",
@@ -248,7 +251,7 @@
     "typeName": "ReadRecord",
     "root": "readRecords",
     "statsRoot": "readRecordStats",
-    "release": "read-record-v2",
+    "release": "read-record-v3",
     "role": "ai_reading_reader",
     "scope": "reading.read",
     "description": "阅读书籍/文章、进度及完成情况；可按创建、开始或完成时间限定范围",
@@ -395,7 +398,7 @@
     "typeName": "Movie",
     "root": "movies",
     "statsRoot": "movieStats",
-    "release": "movie-v2",
+    "release": "movie-v3",
     "role": "ai_movie_reader",
     "scope": "movie.read",
     "description": "影视观看状态、进度、个人评分；可按创建、开始或完成时间限定范围",
@@ -549,7 +552,7 @@
     "typeName": "BVideo",
     "root": "bVideos",
     "statsRoot": "bVideoStats",
-    "release": "b-video-v2",
+    "release": "b-video-v3",
     "role": "ai_video_reader",
     "scope": "video.read",
     "description": "收藏视频、观看状态和进度；durationSeconds / watchedDurationSeconds 单位为秒",
@@ -744,7 +747,7 @@
     "typeName": "Performance",
     "root": "performances",
     "statsRoot": "performanceStats",
-    "release": "performance-v2",
+    "release": "performance-v3",
     "role": "ai_performance_reader",
     "scope": "performance.read",
     "description": "当前用户完整演出记录，含座位、订单号与评价；ticketPrice 为元，durationMinutes 为分钟",
@@ -898,5 +901,66 @@
       "userId",
       "isDeleted"
     ]
+  },
+  {
+    "name": "income_month",
+    "domain": "income",
+    "typeName": "IncomeMonth",
+    "root": "incomeMonths",
+    "statsRoot": "incomeMonthStats",
+    "release": "income-month-v1",
+    "role": "ai_income_reader",
+    "scope": "income.read",
+    "description": "当前用户未删除收入按收入类型、自然月汇总；monthlyAmount 为税前收入合计（元）；month 为每月第一天，查询范围按整月解释",
+    "rangeFields": [
+      "month"
+    ],
+    "fields": {
+      "id": {
+        "column": "id",
+        "kind": "ID",
+        "sqlType": "VARCHAR",
+        "nullable": false
+      },
+      "userId": {
+        "column": "user_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": false
+      },
+      "incomeTypeId": {
+        "column": "income_type_id",
+        "kind": "ID",
+        "sqlType": "BIGINT",
+        "nullable": true
+      },
+      "month": {
+        "column": "month",
+        "kind": "DATE",
+        "sqlType": "DATE",
+        "nullable": false
+      },
+      "monthlyAmount": {
+        "column": "monthly_amount",
+        "kind": "DECIMAL",
+        "sqlType": "DECIMAL",
+        "nullable": true
+      },
+      "isDeleted": {
+        "column": "is_deleted",
+        "kind": "INT",
+        "sqlType": "INT",
+        "nullable": false
+      }
+    },
+    "aggregateFields": [
+      "monthlyAmount"
+    ],
+    "orderFields": [
+      "id",
+      "month",
+      "monthlyAmount"
+    ],
+    "nativeSql": "connector/income-month.sql"
   }
 ]

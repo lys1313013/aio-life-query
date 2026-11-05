@@ -240,12 +240,13 @@ public class QueryService {
                 try { ((ObjectNode) result).put(key, new BigInteger(value.asText()).toString()); }
                 catch (NumberFormatException error) { throw badResult(); }
             } else {
-                if (!value.isObject() || value.size() != 1 || !value.has("sum")) throw badResult();
-                JsonNode sum = value.get("sum");
-                if (!sum.isNull()) {
-                    if (!sum.isNumber() && !sum.isTextual()) throw badResult();
-                    ((ObjectNode) value).put("sum", decimal(sum));
-                }
+                var functions = plan.relationSelections().getOrDefault(key, Map.of("sum", "sum"));
+                if (!value.isObject() || value.size() != functions.size()) throw badResult();
+                functions.forEach((responseKey, function) -> {
+                    JsonNode number = value.get(responseKey);
+                    if (number == null || ("countDistinct".equals(function) && number.isNull())) throw badResult();
+                    if (!number.isNull()) ((ObjectNode) value).put(responseKey, decimal(number));
+                });
             }
         });
     }

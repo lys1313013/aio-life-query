@@ -17,7 +17,7 @@
 
 关系定义来自 [`relationships.json`](../src/main/resources/relationships.json)，派生 SQL 为 [`time-record-category.sql`](time-record-category.sql)。通过时迹 ID 关联，每条时迹最多一个分类；只公开 `id`、`name`，内部 `recordId` 用于 Hasura 映射，`userId` 用于行过滤。公共分类保留公共 ID，名称优先取当前用户未删除、ID 最大的覆盖；停用分类仍用于历史记录，删除、缺失或其他用户私有分类不返回。名称精确筛选可匹配多个同名分类。
 
-六个主数据集的 111 个物理字段来自 [`datasets.json`](../src/main/resources/datasets.json)，由元数据生成器显式投影；不扫描或公开全库。分类额外需要 `time_tracker_category` 的 `id`、`user_id`、`template_id`、`name`、`is_deleted` 五列 SELECT，完整授权见 [`readonly-account.sql.example`](../deploy/readonly-account.sql.example)。
+六个物理主数据集的 111 个物理字段来自 [`datasets.json`](../src/main/resources/datasets.json)，由元数据生成器显式投影；不扫描或公开全库。分类额外需要 `time_tracker_category` 的 `id`、`user_id`、`template_id`、`name`、`is_deleted` 五列 SELECT，完整授权见 [`readonly-account.sql.example`](../deploy/readonly-account.sql.example)。
 
 ## 构建与验证
 
@@ -30,3 +30,5 @@
 **授权核验边界：**此前核验所选 commit 的归档未包含许可证文件，当时 GitHub 仓库 API 的 `license` 返回 null；本次未重新查询上游。改用 jOOQ OSS 只解决该依赖的版本选择，不能据此认定整个 Connector 已获生产使用或再分发许可。当前用于本地验证；生产发布前需明确上游 Connector 的授权，或替换为授权明确、通过同一协议与权限验收的实现。不要将它标注为已经验证的完整免费开源发行版。
 
 Hasura 测试镜像是固定 digest 的 `ddn-engine-local-dev`；生产源码引擎需要另行构建与同等验收，详见 [README](../README.md#独立部署)。GitHub Actions 仅发布 Java 网关，不构建或发布本 Connector 和 Hasura 引擎，详见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。
+
+月收入派生模型来自 [`income-month.sql`](income-month.sql)，按用户、收入类型、自然月分组后公开最大值等受控聚合。需要 `income` 的 `user_id/inc_type_id/inc_date/amt/is_deleted` 列级 SELECT；不修改 Connector 补丁，不接收客户端 SQL。数值聚合扩展为 `sum/max/min`，时迹日期支持 `countDistinct`。许可和生产引擎边界仍按上文执行。

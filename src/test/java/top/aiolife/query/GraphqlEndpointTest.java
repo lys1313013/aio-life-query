@@ -100,9 +100,10 @@ class GraphqlEndpointTest {
     }
 
     @Test void lockedDatasetIsDeniedAndRevocationAppliesToTheNextRequest() throws Exception {
-        when(access.evaluate("token")).thenThrow(new QueryException("SECONDARY_LOCK_REQUIRED", 403, "需要解锁"));
+        when(access.evaluate("token")).thenThrow(QueryException.secondaryLock("/finance/income"));
         mvc.perform(query(QUERY)).andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.errors[0].extensions.code").value("SECONDARY_LOCK_REQUIRED"))
+                .andExpect(jsonPath("$.errors[0].extensions.menuPath").value("/finance/income"))
                 .andExpect(jsonPath("$.data").doesNotExist());
         verifyNoInteractions(http, audit);
         doReturn(user).doThrow(QueryException.denied()).when(access).evaluate("token");

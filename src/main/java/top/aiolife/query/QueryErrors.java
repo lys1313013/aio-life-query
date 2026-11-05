@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
+import java.util.List;
 
 @RestControllerAdvice
 public class QueryErrors {
@@ -17,7 +18,9 @@ public class QueryErrors {
         if (request.getRequestURI().equals("/graphql")) {
             return ResponseEntity.status(error.status()).header("Cache-Control", "no-store")
                     .contentType(MediaType.parseMediaType(GraphqlResponse.contentType(request)))
-                    .body(GraphqlResponse.error(error.code(), error.getMessage()));
+                    .body(error.menuPath() == null ? GraphqlResponse.error(error.code(), error.getMessage())
+                            : Map.of("errors", List.of(Map.of("message", error.getMessage(), "extensions",
+                                    Map.of("code", error.code(), "menuPath", error.menuPath())))));
         }
         return ResponseEntity.status(error.status()).header("Cache-Control", "no-store")
                 .body(Map.of("rscode", error.code(), "result", error.getMessage()));

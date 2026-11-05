@@ -26,7 +26,8 @@ public final class QueryDatasets {
     }
     public record Dataset(String name, String domain, String typeName, String root, String statsRoot,
                           String release, String role, String scope, String description, List<String> rangeFields,
-                          Map<String, Field> fields, List<String> aggregateFields, List<String> orderFields) {
+                          Map<String, Field> fields, List<String> aggregateFields, List<String> orderFields,
+                          List<String> distinctFields, String nativeSql) {
         public String boolType() { return typeName + "BoolExp"; }
         public String orderType() { return typeName + "OrderBy"; }
         public String statsType() { return typeName + "Stats"; }
@@ -41,7 +42,8 @@ public final class QueryDatasets {
             relations().forEach((key, relation) -> out.append("  ").append(key).append(": ").append(relation.typeName()).append('\n'));
             out.append("}\ntype ").append(statsType()).append(" { count: String!");
             aggregateFields.forEach(name -> out.append(' ').append(name).append(": NumericStats"));
-            out.append(" }\ntype NumericStats { sum: String }\ninput ").append(boolType()).append(" {\n");
+            if (distinctFields != null) distinctFields.forEach(name -> out.append(' ').append(name).append(": DistinctStats"));
+            out.append(" }\ntype NumericStats { sum: String max: String min: String }\ntype DistinctStats { countDistinct: String! }\ninput ").append(boolType()).append(" {\n");
             fields.forEach((name, field) -> {
                 if (!"JSON".equals(field.kind())) out.append("  ").append(name).append(": ").append(field.comparison()).append('\n');
             });

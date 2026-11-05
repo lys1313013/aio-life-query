@@ -1,6 +1,6 @@
 # AIO Life Query
 
-AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 MySQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频和演出记录；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
+AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 MySQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频、演出记录及月收入汇总；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
 
 本仓库与 [aio-life-server](https://github.com/lys1313013/aio-life-server) 独立维护。用户身份和业务权限由配套后端校验，业务数据由 Connector 使用只读账号读取。
 
@@ -138,7 +138,7 @@ curl "$AIO_QUERY_URL/graphql" \
   --data-binary @examples/graphql-query.json
 ```
 
-成功时 `data` 包含根字段结果，`extensions` 包含 `queryId`、数据集、版本、行数与执行时间。失败时使用 `errors[].extensions.code`，不返回部分数据。仅支持 POST JSON；SDL 通过带鉴权的数据集描述接口获取，不提供内省。
+成功时 `data` 包含根字段结果，`extensions` 包含 `queryId`、数据集、版本、行数与执行时间。失败时使用 `errors[].extensions.code`；二级锁错误可附带 `errors[].extensions.menuPath`，供客户端通过正常流程解锁对应站内模块，不返回部分数据。仅支持 POST JSON；SDL 通过带鉴权的数据集描述接口获取，不提供内省。
 
 ### MCP
 
@@ -174,12 +174,13 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 | 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
 | --- | --- | --- | --- | --- |
-| `time_record` | `time` | `time-record-v3` | `timeRecords` / `timeRecordStats` | `date` |
-| `exercise_record` | `exercise` | `exercise-record-v2` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
-| `read_record` | `reading` | `read-record-v2` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
-| `movie` | `movie` | `movie-v2` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
-| `b_video` | `video` | `b-video-v2` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
-| `performance` | `performance` | `performance-v2` | `performances` / `performanceStats` | `performanceDate` |
+| `time_record` | `time` | `time-record-v4` | `timeRecords` / `timeRecordStats` | `date` |
+| `exercise_record` | `exercise` | `exercise-record-v3` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
+| `read_record` | `reading` | `read-record-v3` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
+| `movie` | `movie` | `movie-v3` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
+| `b_video` | `video` | `b-video-v3` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
+| `income_month` | `income` | `income-month-v1` | `incomeMonths` / `incomeMonthStats` | `month`（自然月第一天） |
+| `performance` | `performance` | `performance-v3` | `performances` / `performanceStats` | `performanceDate` |
 
 每次查询至少为一个范围字段提供 `_gte` / `_lt` 半开区间，最长 366 天。日期使用 `YYYY-MM-DD`；DATETIME 还接受无时区的 `YYYY-MM-DDTHH:mm:ss`，按数据库本地时间比较。按 `finishTime` 与按 `createdAt` 查询含义不同，范围条件不会自动应用到其他时间字段。
 
@@ -194,7 +195,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
 | JDBC / MySQL 执行时限 | 5 秒 / `max_execution_time=5000` |
 
-所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startTime/endTime` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。
+所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startTime/endTime` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
 没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由 JDBC 和数据库时限约束。
 
@@ -203,6 +204,8 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 时迹明细可选取 `category { id name }`，明细和汇总都支持 `where.category.id/name._eq`。示例见 [sleep-before-midnight.json](examples/sleep-before-midnight.json)，发送到 `/graphql`。其中 `startTime = 0` 只说明片段从零点开始，不能据此推断实际入睡时间。
 
 分类名称按当前用户覆盖后的有效名称匹配，同名分类均可匹配；公共分类保留公共 ID。停用分类保留历史元数据，删除、缺失或其他用户私有分类返回 `category: null`。关系来自 [relationships.json](src/main/resources/relationships.json) 和[固定派生 SQL](connector/time-record-category.sql)，无需创建数据库视图，没有独立公开根查询。
+
+目标自定义查询的三个配置示例为 [俯卧撑](examples/goal-pushups.json)、[零点在睡觉](examples/goal-sleep.json)、[最高单月工资](examples/goal-salary.json)。这些是业务目标请求，使用 `progressQuery` 等字段，不能直接发到 `/graphql`；预览与刷新通过业务后端完成。完整契约见[共同文档](https://github.com/lys1313013/aio-life/blob/main/docs/目标自定义查询进度.md)。运行 `python3 scripts/test_goal_progress.py` 可对隔离 MySQL / Hasura / Connector 及业务目标保存刷新进行联合验收；使用本地授权桩，不代表生产鉴权验收。
 
 分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。MySQL 仅支持 8.x（最低 8.0.16）。此脚本使用本地授权桩，不能代替真实后端授权验收。
 
