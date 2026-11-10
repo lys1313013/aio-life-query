@@ -34,7 +34,7 @@
       "durationMinutes": {
         "column": "duration",
         "kind": "INT",
-        "sqlType": "SMALLINT UNSIGNED",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "createUser": {
@@ -46,13 +46,13 @@
       "startTime": {
         "column": "start_time",
         "kind": "INT",
-        "sqlType": "SMALLINT UNSIGNED",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "endTime": {
         "column": "end_time",
         "kind": "INT",
-        "sqlType": "SMALLINT UNSIGNED",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "title": {
@@ -70,13 +70,13 @@
       "isManual": {
         "column": "is_manual",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": false
       },
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "updateUser": {
@@ -88,7 +88,7 @@
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "relateId": {
@@ -100,7 +100,7 @@
       "relateType": {
         "column": "relate_type",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       },
       "userId": {
@@ -112,7 +112,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": false
       }
     },
@@ -176,7 +176,7 @@
       "exerciseCount": {
         "column": "exercise_count",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "description": {
@@ -194,13 +194,13 @@
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "updateUser": {
@@ -224,7 +224,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": false
       }
     },
@@ -276,7 +276,7 @@
       "type": {
         "column": "type",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": false
       },
       "author": {
@@ -300,31 +300,31 @@
       "totalProgress": {
         "column": "total_progress",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "currentProgress": {
         "column": "current_progress",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "startTime": {
         "column": "start_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": true
       },
       "finishTime": {
         "column": "finish_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": true
       },
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "remark": {
@@ -336,7 +336,7 @@
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "createUser": {
@@ -366,7 +366,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       }
     },
@@ -423,7 +423,7 @@
       "type": {
         "column": "type",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": false
       },
       "director": {
@@ -447,37 +447,37 @@
       "totalProgress": {
         "column": "total_progress",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "currentProgress": {
         "column": "current_progress",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "startTime": {
         "column": "start_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": true
       },
       "finishTime": {
         "column": "finish_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": true
       },
       "rating": {
         "column": "rating",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       },
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "remark": {
@@ -489,7 +489,7 @@
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "createUser": {
@@ -519,7 +519,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       }
     },
@@ -594,25 +594,25 @@
       "durationSeconds": {
         "column": "duration",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "watchedDurationSeconds": {
         "column": "watched_duration",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": false
       },
       "episodes": {
         "column": "episodes",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "currentEpisode": {
         "column": "current_episode",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "status": {
@@ -624,13 +624,13 @@
       "lastWatched": {
         "column": "last_watched",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": true
       },
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "cover": {
@@ -660,7 +660,7 @@
       "pagesInfo": {
         "column": "pages_info",
         "kind": "JSON",
-        "sqlType": "JSON",
+        "sqlType": "JSONB",
         "nullable": true
       },
       "createUser": {
@@ -678,7 +678,7 @@
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "coverFileId": {
@@ -708,7 +708,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       }
     },
@@ -782,7 +782,7 @@
       "performanceDate": {
         "column": "performance_date",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "city": {
@@ -800,19 +800,19 @@
       "ticketPrice": {
         "column": "ticket_price",
         "kind": "DECIMAL",
-        "sqlType": "DECIMAL",
+        "sqlType": "NUMERIC",
         "nullable": false
       },
       "durationMinutes": {
         "column": "duration",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": true
       },
       "rating": {
         "column": "rating",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       },
       "seatInfo": {
@@ -848,7 +848,7 @@
       "createdAt": {
         "column": "create_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "updateUser": {
@@ -860,7 +860,7 @@
       "updatedAt": {
         "column": "update_time",
         "kind": "DATETIME",
-        "sqlType": "DATETIME",
+        "sqlType": "TIMESTAMP",
         "nullable": false
       },
       "userId": {
@@ -872,7 +872,7 @@
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "TINYINT",
+        "sqlType": "SMALLINT",
         "nullable": true
       }
     },
@@ -943,13 +943,13 @@
       "monthlyAmount": {
         "column": "monthly_amount",
         "kind": "DECIMAL",
-        "sqlType": "DECIMAL",
+        "sqlType": "NUMERIC",
         "nullable": true
       },
       "isDeleted": {
         "column": "is_deleted",
         "kind": "INT",
-        "sqlType": "INT",
+        "sqlType": "INTEGER",
         "nullable": false
       }
     },

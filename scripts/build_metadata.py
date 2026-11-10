@@ -15,16 +15,16 @@ def fields(dataset):
     return dict(dataset['fields'])
 
 def ndc_type(field):
-    return {'BIGINT':'INT64', 'VARCHAR':'STRING', 'TEXT':'STRING', 'JSON':'JSON', 'DATE':'DATE', 'DATETIME':'TIMESTAMP',
-            'INT':'INT32', 'TINYINT':'INT8', 'SMALLINT UNSIGNED':'INT32', 'DECIMAL':'BIGDECIMAL'}[field['sqlType']]
+    return {'BIGINT':'INT64', 'VARCHAR':'STRING', 'TEXT':'STRING', 'JSONB':'JSON', 'DATE':'DATE', 'TIMESTAMP':'TIMESTAMP',
+            'INTEGER':'INT32', 'SMALLINT':'INT16', 'NUMERIC':'BIGDECIMAL'}[field['sqlType']]
 
 def api_type(field):
     return {'INT64':'BigInt', 'STRING':'String', 'DATE':'String', 'TIMESTAMP':'String',
-            'INT32':'Int', 'INT8':'Int', 'BIGDECIMAL':'BigDecimal', 'JSON':'Json'}[ndc_type(field)]
+            'INT32':'Int', 'INT16':'Int', 'BIGDECIMAL':'BigDecimal', 'JSON':'Json'}[ndc_type(field)]
 
 def comparison(field):
     return {'INT64':'CategoryComparison', 'STRING':'IdComparison', 'DATE':'DateComparison',
-            'TIMESTAMP':'TimestampComparison', 'INT32':'IntComparison', 'INT8':'TinyIntComparison',
+            'TIMESTAMP':'TimestampComparison', 'INT32':'IntComparison', 'INT16':'TinyIntComparison',
             'BIGDECIMAL':'DecimalComparison'}[ndc_type(field)]
 
 def obj(kind, definition):
@@ -61,8 +61,8 @@ def connector_config():
                 'nullable':field['nullable'], 'auto_increment':False, 'is_primarykey':name=='id'})
         tables.append({'tableName':dataset['name'], 'tableType':'TABLE', 'description':None,
                        'columns':columns, 'pks':['id'], 'fks':{}})
-    return {'jdbcUrl':{'variable':'JDBC_URL'}, 'jdbcProperties':{'connectTimeout':'2000','socketTimeout':'6000',
-            'sessionVariables':'max_execution_time=5000,group_concat_max_len=1000000', 'allowMultiQueries':'false', 'allowLoadLocalInfile':'false'},
+    return {'jdbcUrl':{'variable':'JDBC_URL'}, 'jdbcProperties':{'connectTimeout':'2','socketTimeout':'6',
+            'options':'-c statement_timeout=5000 -c default_transaction_read_only=on', 'stringtype':'unspecified'},
             'tables':tables, 'functions':[], 'nativeQueries':{
                 relation['collection']: {
                     'sql': (ROOT / relation['nativeSql']).read_text(),
@@ -79,7 +79,7 @@ def connector_config():
 def build(connector_url, connector_key):
     scalar_types = {}
     for name, representation in [('STRING','string'), ('DATE','date'), ('TIMESTAMP','timestamp'),
-                                 ('INT8','int8'), ('INT32','int32'), ('INT64','int64'), ('BIGDECIMAL','bigdecimal'), ('JSON','json')]:
+                                 ('INT16','int16'), ('INT32','int32'), ('INT64','int64'), ('BIGDECIMAL','bigdecimal'), ('JSON','json')]:
         ops = {'_eq': {'type':'equal'}}
         if name not in ['STRING', 'JSON']:
             ops.update({op:{'type':'custom','argument_type':{'type':'named','name':name}} for op in ['_gte','_lt','_lte']})
@@ -106,36 +106,36 @@ def build(connector_url, connector_key):
                 for field in relation['fields'].values()}}
             schema['collections'].append({'name': collection, 'type': collection, 'arguments': {},
                 'uniqueness_constraints': {'primary': {'unique_columns': ['record_id']}}, 'foreign_keys': {}})
-    objects = [obj('DataConnectorLink', {'name':'mysql', 'url':{'singleUrl':{'value':connector_url}},
+    objects = [obj('DataConnectorLink', {'name':'postgresql', 'url':{'singleUrl':{'value':connector_url}},
         'headers':{'Authorization':{'value':'Bearer '+connector_key}}, 'schema':{'version':'v0.1','schema':schema,
         'capabilities':{'version':'0.1.6','capabilities':{'query':{'aggregates':{},'variables':{}}, 'mutation':{},
         'relationships':{'relation_comparisons':{},'order_by_aggregate':{}}}}}})]
     for name in ['BigInt','BigDecimal','Json']:
         objects.append(obj('ScalarType', {'name':name,'graphql':{'typeName':name}}))
-    for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT8','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal'),('JSON','Json')]:
-        objects.append(obj('DataConnectorScalarRepresentation', {'dataConnectorName':'mysql','dataConnectorScalarType':ndc,'representation':api}))
+    for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT16','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal'),('JSON','Json')]:
+        objects.append(obj('DataConnectorScalarRepresentation', {'dataConnectorName':'postgresql','dataConnectorScalarType':ndc,'representation':api}))
     for name, scalar, api, ops in [('DateComparison','DATE','String',['_gte','_lt']),
                                   ('TimestampComparison','TIMESTAMP','String',['_gte','_lt']),
                                   ('IdComparison','STRING','String',['_eq']),
                                   ('CategoryComparison','INT64','BigInt',['_eq']),
-                                  ('TinyIntComparison','INT8','Int',['_eq','_gte','_lte']),
+                                  ('TinyIntComparison','INT16','Int',['_eq','_gte','_lte']),
                                   ('IntComparison','INT32','Int',['_eq','_gte','_lte']),
                                   ('DecimalComparison','BIGDECIMAL','BigDecimal',['_eq','_gte','_lte'])]:
         objects.append(obj('BooleanExpressionType', {'name':name,'operand':{'scalar':{'type':api,
             'comparisonOperators':[{'name':op,'argumentType':api+'!'} for op in ops],
-            'dataConnectorOperatorMapping':[{'dataConnectorName':'mysql','dataConnectorScalarType':scalar,'operatorMapping':{op:op for op in ops}}]}},
+            'dataConnectorOperatorMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':scalar,'operatorMapping':{op:op for op in ops}}]}},
             'logicalOperators':{'enable':False}, 'isNull':{'enable':False}, 'graphql':{'typeName':name}}))
     for name, api, ndc, result in [('IntSum','Int','INT32','BigInt'), ('DecimalSum','BigDecimal','BIGDECIMAL','BigDecimal')]:
         objects.append(obj('AggregateExpression', {'name':name,'operand':{'scalar':{'aggregatedType':api,
             'aggregationFunctions':[{'name':function,'returnType':result} for function in ['sum','max','min']],
-            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'mysql','dataConnectorScalarType':ndc,'functionMapping':{function:{'name':function} for function in ['sum','max','min']}}]}},
+            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':ndc,'functionMapping':{function:{'name':function} for function in ['sum','max','min']}}]}},
             'count':{'enable':False},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
     objects.append(obj('AggregateExpression', {'name':'DateDistinct','operand':{'scalar':{'aggregatedType':'String','aggregationFunctions':[],'dataConnectorAggregationFunctionMapping':[]}}, 'count':{'enable':False},'countDistinct':{'enable':True},'graphql':{'selectTypeName':'DateDistinctStats'}}))
     for dataset in DATASETS:
         name = dataset['typeName']; model = name+'Model'; all_fields = fields(dataset)
         objects.append(obj('ObjectType', {'name':name,'graphql':{'typeName':name},
             'fields':[{'name':key,'type':api_type(field)+('' if field['nullable'] else '!')} for key,field in all_fields.items()],
-            'dataConnectorTypeMapping':[{'dataConnectorName':'mysql','dataConnectorObjectType':dataset['name'],
+            'dataConnectorTypeMapping':[{'dataConnectorName':'postgresql','dataConnectorObjectType':dataset['name'],
                 'fieldMapping':{key:{'column':{'name':field['column']}} for key,field in all_fields.items()}}]}))
         objects.append(obj('BooleanExpressionType', {'name':name+'BoolExp','operand':{'object':{'type':name,
             'comparableFields':[{'fieldName':key,'booleanExpressionType':comparison(field)} for key,field in all_fields.items() if field['kind'] != 'JSON'],
@@ -144,7 +144,7 @@ def build(connector_url, connector_key):
         objects.append(obj('AggregateExpression', {'name':name+'Aggregate','operand':{'object':{'aggregatedType':name,
             'aggregatableFields':[{'fieldName':key,'aggregateExpression':'DecimalSum' if dataset['fields'][key]['kind']=='DECIMAL' else 'IntSum'} for key in dataset['aggregateFields']] + [{'fieldName':key,'aggregateExpression':'DateDistinct'} for key in dataset.get('distinctFields',[])]}},
             'count':{'enable':True},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
-        objects.append(obj('Model', {'name':model,'objectType':name,'source':{'dataConnectorName':'mysql','collection':dataset['name']},
+        objects.append(obj('Model', {'name':model,'objectType':name,'source':{'dataConnectorName':'postgresql','collection':dataset['name']},
             'filterExpressionType':name+'BoolExp','aggregateExpression':name+'Aggregate',
             'orderableFields':[{'fieldName':key,'orderByDirections':{'enableAll':True}} for key in dataset['orderFields']],
             'graphql':{'selectMany':{'queryRootField':dataset['root']}, 'selectUniques':[], 'orderByExpressionType':name+'OrderBy',
@@ -158,14 +158,14 @@ def build(connector_url, connector_key):
             objects.append(obj('ObjectType', {'name': target, 'graphql': {'typeName': target},
                 'fields': [{'name': field_name, 'type': api_type(field)+('' if field['nullable'] else '!')}
                            for field_name, field in relation_fields.items()],
-                'dataConnectorTypeMapping': [{'dataConnectorName': 'mysql', 'dataConnectorObjectType': relation['collection'],
+                'dataConnectorTypeMapping': [{'dataConnectorName': 'postgresql', 'dataConnectorObjectType': relation['collection'],
                     'fieldMapping': {field_name: {'column': {'name': field['column']}} for field_name, field in relation_fields.items()}}]}))
             objects.append(obj('BooleanExpressionType', {'name': target+'BoolExp', 'operand': {'object': {'type': target,
                 'comparableFields': [{'fieldName': field_name, 'booleanExpressionType': comparison(relation_fields[field_name])}
                                      for field_name in relation_fields], 'comparableRelationships': []}},
                 'logicalOperators': {'enable': False}, 'isNull': {'enable': False}, 'graphql': {'typeName': target+'BoolExp'}}))
             objects.append(obj('Model', {'name': model, 'objectType': target,
-                'source': {'dataConnectorName': 'mysql', 'collection': relation['collection']},
+                'source': {'dataConnectorName': 'postgresql', 'collection': relation['collection']},
                 'filterExpressionType': target+'BoolExp', 'orderableFields': []}))
             objects.append(obj('ModelPermissions', {'modelName': model, 'permissions': [{'role': dataset['role'],
                 'select': {'filter': {'fieldComparison': {'field': 'userId', 'operator': '_eq',
@@ -192,7 +192,7 @@ if __name__ == '__main__':
     if len(key)<32:raise SystemExit('AIO_QUERY_WEBHOOK_KEY must contain at least 32 characters')
     connector_key=os.environ.get('AIO_QUERY_CONNECTOR_KEY','')
     if len(connector_key)<32:raise SystemExit('AIO_QUERY_CONNECTOR_KEY must contain at least 32 characters')
-    metadata,schema=build(os.environ.get('AIO_QUERY_CONNECTOR_URL','http://mysql-connector:8080'),connector_key)
+    metadata,schema=build(os.environ.get('AIO_QUERY_CONNECTOR_URL','http://postgresql-connector:8080'),connector_key)
     auth={'version':'v4','definition':{'mode':{'webhook':{'url':{'value':os.environ.get('AIO_QUERY_AUTH_WEBHOOK_URL','http://gateway:45680/internal/hasura/auth')},
         'method':'POST','customHeadersConfig':{'body':{'headers':{'forward':['authorization']}},'headers':{'additional':{'X-AIO-Webhook-Key':key}}}}}}}
     write_bundle(args.output, [('open_dd.json',metadata),('auth_config.json',auth),('ndc-schema.json',schema),('configuration.json',connector_config())])

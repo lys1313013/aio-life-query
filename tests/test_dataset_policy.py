@@ -32,7 +32,7 @@ class DatasetPolicyTest(unittest.TestCase):
                     self.assertIn(dataset['name'], metadata.connector_config()['nativeQueries'])
                     continue
                 self.assertEqual(set(columns), {column['name'] for column in tables[dataset['name']]['columns']})
-                self.assertIn('GRANT SELECT ('+', '.join(columns)+')\n  ON aio_life.'+dataset['name'], grants)
+                self.assertIn('GRANT SELECT ('+', '.join(columns)+')\n  ON public.'+dataset['name'], grants)
                 self.assertEqual({}, tables[dataset['name']]['fks'])
         self.assertIn('order_number', schema['object_types']['performance']['fields'])
         self.assertIn('seat_info', schema['object_types']['performance']['fields'])

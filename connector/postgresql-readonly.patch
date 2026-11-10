@@ -1,0 +1,2939 @@
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/ExceptionMappers.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/ExceptionMappers.kt
+@@ -59,13 +59,13 @@
+                 .status(status)
+                 .entity(
+                     ErrorResponse(
+-                        message = message ?: exception.message ?: "An uncaught error occurred",
+-                        details = mapOf("stacktrace" to exception.stackTraceToString())
++                        message = "Connector request failed",
++                        details = emptyMap()
+                     )
+                 )
+                 .build()
+         } finally {
+-            logger.error("Uncaught exception", exception)
++            logger.error("Connector request failed: " + exception.javaClass.simpleName)
+         }
+     }
+ }
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/Filters.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/application/Filters.kt
+@@ -14,22 +14,13 @@
+     @Inject
+     private lateinit var logger: Logger
+ 
+-    @ServerRequestFilter(priority = 0)
+-    fun logBodyFilter(info: UriInfo, request: HttpServerRequest, ctx: ContainerRequestContext) {
+-        request.body { b ->
+-            logger.debug("INCOMING IR:")
+-            logger.debug(b.result())
+-        }
+-    }
+-
+     @ServerRequestFilter
+     fun tokenFilter(ctx: ContainerRequestContext): Response? {
+         if(ctx.uriInfo.path.startsWith("/health")) return null
+ 
+         val secret = System.getenv("HASURA_SERVICE_TOKEN_SECRET")
+         if (secret.isNullOrEmpty()) {
+-            logger.warn("Environment variable HASURA_SERVICE_TOKEN_SECRET not set. Token validation is bypassed.")
+-            return null
++            return Response.status(Response.Status.SERVICE_UNAVAILABLE).build()
+         }
+ 
+         val authHeader = ctx.getHeaderString(HttpHeaders.AUTHORIZATION)
+@@ -43,7 +34,7 @@
+             logger.error("Token is empty")
+             return Response.status(Response.Status.UNAUTHORIZED).build()
+         }
+-        if (token != secret) {
++        if (!java.security.MessageDigest.isEqual(token.toByteArray(), secret.toByteArray())) {
+             logger.error("Token is invalid")
+             return Response.status(Response.Status.UNAUTHORIZED).build()
+         }
+--- a/ndc-app/src/main/kotlin/io/hasura/ndc/app/services/dataConnectors/BaseDataConnectorService.kt
++++ b/ndc-app/src/main/kotlin/io/hasura/ndc/app/services/dataConnectors/BaseDataConnectorService.kt
+@@ -203,6 +203,8 @@
+     val commonDSLContextSettings: Settings =
+         Settings()
+             .withRenderFormatted(true)
++            .withExecuteLogging(false)
++            .withRenderGroupConcatMaxLenSessionVariable(false)
+             .withStatementType(StatementType.STATIC_STATEMENT)
+ 
+     @WithSpan
+@@ -229,7 +231,11 @@
+ 
+     @WithSpan
+     open fun executeDbQuery(query: ResultQuery<*>, ctx: DSLContext): Result<out Record> {
+-        return ctx.fetch(query)
++        query.attach(ctx.configuration())
++        return try { query.queryTimeout(5).fetch() }
++        catch (_: org.jooq.exception.DataAccessException) {
++            throw jakarta.ws.rs.InternalServerErrorException("Query execution failed")
++        }
+     }
+ 
+     protected open fun executeAndSerializeMutation(
+@@ -246,14 +252,8 @@
+ 
+     @WithSpan
+     open fun mkDSLCtx(requestArguments: Map<String, Any>?): DSLContext {
+-        val base = ConnectorConfiguration.Loader.config
+-        val override = (requestArguments?.get("connection_string") as? String)
+-        val effectiveConfig = if (override.isNullOrBlank()) {
+-            base
+-        } else {
+-            base.copy(jdbcUrl = io.hasura.ndc.common.JdbcUrlConfig.Literal(override))
+-        }
+-        val ds = dataSourceProvider.getDataSource(effectiveConfig)
++        if (!requestArguments.isNullOrEmpty()) throw jakarta.ws.rs.BadRequestException("Request arguments are disabled")
++        val ds = dataSourceProvider.getDataSource(ConnectorConfiguration.Loader.config)
+         return DSL.using(ds, jooqDialect, jooqSettings)
+     }
+ 
+@@ -268,10 +268,7 @@
+ 
+     @WithSpan
+     override fun explainQuery(request: QueryRequest): ExplainResponse {
+-        val dslCtx = mkDSLCtx(request.request_arguments)
+-        val query = buildQuery(request)
+-        val explain = dslCtx.explain(query)
+-        return ExplainResponse(query = query.sql, lines = listOf(explain.plan()))
++        throw jakarta.ws.rs.ForbiddenException("Explain is disabled")
+     }
+ 
+     @WithSpan
+@@ -283,8 +280,7 @@
+ 
+     @WithSpan
+     override fun handleMutation(request: MutationRequest): MutationResponse {
+-        val dslCtx = mkDSLCtx(request.request_arguments)
+-        return executeAndSerializeMutation(request, dslCtx)
++        throw jakarta.ws.rs.ForbiddenException("Mutations are disabled")
+     }
+ 
+     @WithSpan
+--- a/ndc-cli/build.gradle.kts
++++ b/ndc-cli/build.gradle.kts
+@@ -22,7 +22,7 @@
+     implementation("info.picocli:picocli:4.7.5")
+ 
+     implementation("com.oracle.database.jdbc:ojdbc8:19.18.0.0")
+-    implementation("com.mysql:mysql-connector-j:9.2.0")
++    implementation("com.postgresql:postgresql-connector-j:9.2.0")
+     implementation("net.snowflake:snowflake-jdbc:3.23.1")
+     implementation("io.trino:trino-jdbc:466")
+     implementation("com.jakewharton.picnic:picnic:0.6.0")
+--- a/ndc-cli/src/main/kotlin/io/hasura/cli/MySQLConfigGenerator.kt
++++ /dev/null
+@@ -1,109 +0,0 @@
+-package io.hasura.cli
+-
+-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
+-import com.fasterxml.jackson.module.kotlin.readValue
+-import io.hasura.ndc.common.ColumnSchemaRow
+-import io.hasura.ndc.common.ConnectorConfiguration
+-import io.hasura.ndc.common.JdbcUrlConfig
+-import io.hasura.ndc.common.TableSchemaRow
+-import io.hasura.ndc.common.TableType
+-import org.jooq.impl.DSL
+-
+-object MySQLConfigGenerator : IConfigGenerator {
+-    private val mapper = jacksonObjectMapper()
+-
+-    override fun generateConfig(
+-        jdbcUrl: JdbcUrlConfig,
+-        schemas: List<String>,
+-        fullyQualifyNames: Boolean,
+-    ): ConnectorConfiguration {
+-        val jdbcUrlString = when (jdbcUrl) {
+-            is JdbcUrlConfig.Literal -> jdbcUrl.value
+-            is JdbcUrlConfig.EnvVar -> System.getenv(jdbcUrl.variable)
+-                ?: throw IllegalArgumentException("Environment variable ${jdbcUrl.variable} not found")
+-        }
+-        val ctx = DSL.using(jdbcUrlString)
+-
+-        //language=MySQL
+-        val sql = """
+-            SELECT
+-                ${if (fullyQualifyNames) {
+-                    "concat(tables.TABLE_SCHEMA, '.', tables.TABLE_NAME) AS TABLE_NAME,"
+-                } else {
+-                    "tables.TABLE_NAME AS TABLE_NAME,"
+-                }}
+-                tables.TABLE_TYPE,
+-                tables.table_COMMENT as DESCRIPTION,
+-                cols.COLUMNS,
+-                fks.FOREIGN_KEYS
+-            FROM (
+-                SELECT *
+-                FROM INFORMATION_SCHEMA.TABLES tables
+-                WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')
+-                AND tables.TABLE_SCHEMA = DATABASE()
+-            ) tables
+-            LEFT OUTER JOIN (
+-                SELECT
+-                    columns.TABLE_SCHEMA,
+-                    columns.TABLE_NAME,
+-                    json_arrayagg(json_object(
+-                        'name', columns.column_name,
+-                        'description', columns.column_comment,
+-                        'type', columns.data_type,
+-                        'numeric_precision', columns.numeric_precision,
+-                        'numeric_scale', columns.numeric_scale,
+-                        'nullable', if (columns.is_nullable = 'yes', true, false),
+-                        'auto_increment', if(columns.extra = 'auto_increment',true,false),
+-                        'is_primarykey', if(columns.COLUMN_KEY = 'PRI', true, false)
+-                    )) as COLUMNS
+-                FROM INFORMATION_SCHEMA.COLUMNS columns
+-                GROUP BY columns.TABLE_SCHEMA, columns.TABLE_NAME
+-            ) AS cols ON cols.TABLE_SCHEMA = tables.TABLE_SCHEMA AND cols.TABLE_NAME = tables.TABLE_NAME
+-            LEFT OUTER JOIN (
+-                SELECT
+-                    keys.TABLE_SCHEMA,
+-                    keys.TABLE_NAME,
+-                    json_objectagg(keys.constraint_name, json_object(
+-                        'foreign_collection', ${
+-                            if (fullyQualifyNames) {
+-                                "concat(keys.TABLE_SCHEMA, '.', keys.REFERENCED_TABLE_NAME)"
+-                            } else {
+-                                "keys.REFERENCED_TABLE_NAME"
+-                            }
+-                        },
+-                        'column_mapping', json_object(keys.COLUMN_NAME,keys.REFERENCED_COLUMN_NAME)
+-                    )) AS "FOREIGN_KEYS"
+-                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE as `keys` where REFERENCED_TABLE_NAME is not null
+-                GROUP BY keys.TABLE_SCHEMA, keys.TABLE_NAME
+-            ) AS fks ON fks.TABLE_SCHEMA = tables.TABLE_SCHEMA AND fks.TABLE_NAME = tables.TABLE_NAME
+-        """.trimIndent()
+-
+-        val tables = ctx.fetch(sql).map { row ->
+-            val columns = row
+-                .get("COLUMNS", String::class.java)
+-                .let { mapper.readValue<List<ColumnSchemaRow>>(it) }
+-
+-            val pks = columns.filter { it.is_primarykey ?: false }
+-
+-            TableSchemaRow(
+-                tableName = row.get("TABLE_NAME", String::class.java),
+-                tableType = when (val tableType = row.get("TABLE_TYPE", String::class.java)) {
+-                    "BASE TABLE" -> TableType.TABLE
+-                    "VIEW" -> TableType.VIEW
+-                    else -> throw Exception("Unknown table type: $tableType")
+-                },
+-                description = row.get("DESCRIPTION", String::class.java),
+-                columns = columns,
+-                pks = pks.map { it.name },
+-                fks = row.get("FOREIGN_KEYS", String::class.java)?.let(mapper::readValue)
+-            )
+-        }
+-
+-        return ConnectorConfiguration(
+-            jdbcUrl = jdbcUrl,
+-            jdbcProperties = mapOf("allowMultiQueries" to "true"),
+-            tables = tables,
+-            functions = emptyList()
+-        )
+-    }
+-}
+--- /dev/null
++++ b/ndc-cli/src/main/kotlin/io/hasura/cli/PostgreSQLConfigGenerator.kt
+@@ -0,0 +1,109 @@
++package io.hasura.cli
++
++import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
++import com.fasterxml.jackson.module.kotlin.readValue
++import io.hasura.ndc.common.ColumnSchemaRow
++import io.hasura.ndc.common.ConnectorConfiguration
++import io.hasura.ndc.common.JdbcUrlConfig
++import io.hasura.ndc.common.TableSchemaRow
++import io.hasura.ndc.common.TableType
++import org.jooq.impl.DSL
++
++object PostgreSQLConfigGenerator : IConfigGenerator {
++    private val mapper = jacksonObjectMapper()
++
++    override fun generateConfig(
++        jdbcUrl: JdbcUrlConfig,
++        schemas: List<String>,
++        fullyQualifyNames: Boolean,
++    ): ConnectorConfiguration {
++        val jdbcUrlString = when (jdbcUrl) {
++            is JdbcUrlConfig.Literal -> jdbcUrl.value
++            is JdbcUrlConfig.EnvVar -> System.getenv(jdbcUrl.variable)
++                ?: throw IllegalArgumentException("Environment variable ${jdbcUrl.variable} not found")
++        }
++        val ctx = DSL.using(jdbcUrlString)
++
++        //language=PostgreSQL
++        val sql = """
++            SELECT
++                ${if (fullyQualifyNames) {
++                    "concat(tables.TABLE_SCHEMA, '.', tables.TABLE_NAME) AS TABLE_NAME,"
++                } else {
++                    "tables.TABLE_NAME AS TABLE_NAME,"
++                }}
++                tables.TABLE_TYPE,
++                tables.table_COMMENT as DESCRIPTION,
++                cols.COLUMNS,
++                fks.FOREIGN_KEYS
++            FROM (
++                SELECT *
++                FROM INFORMATION_SCHEMA.TABLES tables
++                WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW')
++                AND tables.TABLE_SCHEMA = DATABASE()
++            ) tables
++            LEFT OUTER JOIN (
++                SELECT
++                    columns.TABLE_SCHEMA,
++                    columns.TABLE_NAME,
++                    json_arrayagg(json_object(
++                        'name', columns.column_name,
++                        'description', columns.column_comment,
++                        'type', columns.data_type,
++                        'numeric_precision', columns.numeric_precision,
++                        'numeric_scale', columns.numeric_scale,
++                        'nullable', if (columns.is_nullable = 'yes', true, false),
++                        'auto_increment', if(columns.extra = 'auto_increment',true,false),
++                        'is_primarykey', if(columns.COLUMN_KEY = 'PRI', true, false)
++                    )) as COLUMNS
++                FROM INFORMATION_SCHEMA.COLUMNS columns
++                GROUP BY columns.TABLE_SCHEMA, columns.TABLE_NAME
++            ) AS cols ON cols.TABLE_SCHEMA = tables.TABLE_SCHEMA AND cols.TABLE_NAME = tables.TABLE_NAME
++            LEFT OUTER JOIN (
++                SELECT
++                    keys.TABLE_SCHEMA,
++                    keys.TABLE_NAME,
++                    json_objectagg(keys.constraint_name, json_object(
++                        'foreign_collection', ${
++                            if (fullyQualifyNames) {
++                                "concat(keys.TABLE_SCHEMA, '.', keys.REFERENCED_TABLE_NAME)"
++                            } else {
++                                "keys.REFERENCED_TABLE_NAME"
++                            }
++                        },
++                        'column_mapping', json_object(keys.COLUMN_NAME,keys.REFERENCED_COLUMN_NAME)
++                    )) AS "FOREIGN_KEYS"
++                FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE as `keys` where REFERENCED_TABLE_NAME is not null
++                GROUP BY keys.TABLE_SCHEMA, keys.TABLE_NAME
++            ) AS fks ON fks.TABLE_SCHEMA = tables.TABLE_SCHEMA AND fks.TABLE_NAME = tables.TABLE_NAME
++        """.trimIndent()
++
++        val tables = ctx.fetch(sql).map { row ->
++            val columns = row
++                .get("COLUMNS", String::class.java)
++                .let { mapper.readValue<List<ColumnSchemaRow>>(it) }
++
++            val pks = columns.filter { it.is_primarykey ?: false }
++
++            TableSchemaRow(
++                tableName = row.get("TABLE_NAME", String::class.java),
++                tableType = when (val tableType = row.get("TABLE_TYPE", String::class.java)) {
++                    "BASE TABLE" -> TableType.TABLE
++                    "VIEW" -> TableType.VIEW
++                    else -> throw Exception("Unknown table type: $tableType")
++                },
++                description = row.get("DESCRIPTION", String::class.java),
++                columns = columns,
++                pks = pks.map { it.name },
++                fks = row.get("FOREIGN_KEYS", String::class.java)?.let(mapper::readValue)
++            )
++        }
++
++        return ConnectorConfiguration(
++            jdbcUrl = jdbcUrl,
++            jdbcProperties = mapOf("allowMultiQueries" to "true"),
++            tables = tables,
++            functions = emptyList()
++        )
++    }
++}
+--- a/ndc-cli/src/main/kotlin/io/hasura/cli/main.kt
++++ b/ndc-cli/src/main/kotlin/io/hasura/cli/main.kt
+@@ -14,7 +14,7 @@
+ 
+ enum class DatabaseType {
+     ORACLE,
+-    MYSQL,
++    POSTGRESQL,
+     SNOWFLAKE,
+     TRINO
+ }
+@@ -133,7 +133,7 @@
+ 
+         val configGenerator = when (database) {
+             DatabaseType.ORACLE -> OracleConfigGenerator
+-            DatabaseType.MYSQL -> MySQLConfigGenerator
++            DatabaseType.POSTGRESQL -> PostgreSQLConfigGenerator
+             DatabaseType.SNOWFLAKE -> SnowflakeConfigGenerator
+             DatabaseType.TRINO -> TrinoConfigGenerator
+         }
+--- a/ndc-connector-mysql/README.md
++++ /dev/null
+@@ -1,169 +0,0 @@
+-# MySQL Connector
+-
+-[![Docs](https://img.shields.io/badge/docs-v3.x-brightgreen.svg?style=flat)](https://hasura.io/docs/3.0/getting-started/overview/)
+-[![ndc-hub](https://img.shields.io/badge/ndc--hub-sqlserver-blue.svg?style=flat)](https://hasura.io/connectors/sqlserver)
+-[![License](https://img.shields.io/badge/license-Apache--2.0-purple.svg?style=flat)](LICENSE.txt)
+-[![Status](https://img.shields.io/badge/status-alpha-yellow.svg?style=flat)](./readme.md)
+-
+-With this connector, Hasura allows you to instantly create a real-time GraphQL API on top of your data models in
+-MySQL. This connector supports MySQL's functionalities listed in the table below, allowing for
+-efficient and scalable data operations. Additionally, users benefit from all the powerful features of Hasura’s Data
+-Delivery Network (DDN) platform, including query pushdown capabilities that delegate query operations to the database,
+-thereby enhancing query optimization and performance.
+-
+-This connector implements the [Data Connector Spec](https://github.com/hasura/ndc-spec).
+-
+-- [Connector information in the Hasura Hub](https://hasura.io/connectors/MySQL)
+-- [Hasura V3 Documentation](https://hasura.io/docs/3.0)
+-
+-## Features
+-
+-Below, you'll find a matrix of all supported features for the MySQL connector:
+-
+-| Feature                         | Supported | Notes |
+-|---------------------------------|-----------|-------|
+-| Native Queries + Logical Models | ✅         |       |
+-| Native Mutations                | ❌         |       |
+-| Simple Object Query             | ✅         |       |
+-| Filter / Search                 | ✅         |       |
+-| Simple Aggregation              | ✅         |       |
+-| Sort                            | ✅         |       |
+-| Paginate                        | ✅         |       |
+-| Table Relationships             | ✅         |       |
+-| Views                           | ✅         |       |
+-| Remote Relationships            | ✅         |       |
+-| Custom Fields                   | ❌         |       |
+-| Mutations                       | ❌         |       |
+-| Distinct                        | ❌         |       |
+-| Enums                           | ❌         |       |
+-| Naming Conventions              | ❌         |       |
+-| Default Values                  | ❌         |       |
+-| User-defined Functions          | ❌         |       |
+-
+-## Before you get Started
+-
+-1. Create a [Hasura Cloud account](https://console.hasura.io)
+-2. Install the [CLI](https://hasura.io/docs/3.0/cli/installation/)
+-3. Install the [Hasura VS Code extension](https://marketplace.visualstudio.com/items?itemName=HasuraHQ.hasura)
+-4. [Create a supergraph](https://hasura.io/docs/3.0/getting-started/init-supergraph)
+-5. [Create a subgraph](https://hasura.io/docs/3.0/getting-started/init-subgraph)
+-
+-## Using the connector
+-
+-To use the MySQL connector, follow these steps in a Hasura project:
+-(Note: for more information on the following steps, please refer to the Postgres connector
+-documentation [here](https://hasura.io/docs/3.0/getting-started/connect-to-data/connect-a-source))
+-
+-### 1. Init the connector
+-
+-(Note: here and following we are naming the subgraph "my_subgraph" and the connector "my_mysql")
+-
+-   ```bash
+-   ddn connector init my_mysql --subgraph my_subgraph --hub-connector hasura/MySQL
+-   ```
+-
+-### 2. Add your MySQL credentials:
+-
+-Add your credentials to `my_subgraph/connector/my_sql/.env.local`
+-
+-```env title="my_subgraph/connector/my_mysql/.env.local"
+-JDBC_URL="jdbc:MySQL:thin:@//host.docker.internal:1521/XE?user=<user>&password=<password>"
+-```
+-
+-### 3. Introspect your indices
+-
+-```bash title="From the root of your project run:"
+-ddn connector introspect --connector my_subgraph/connector/my_mysql/connector.yaml
+-```
+-
+-If you look at the `configuration.json` for your connector, you'll see metadata describing your MySQL mappings.
+-
+-### 4. Create the Hasura metadata
+-
+-```bash title="Run the following from the root of your project:"
+-ddn connector-link add my_mysql --subgraph my_subgraph
+-```
+-
+-The generated file has two environment variables — one for reads and one for writes — that you'll need to add to your
+-subgraph's `.env.my_subgraph` file. Each key is prefixed by the subgraph name, an underscore, and the name of the
+-connector. Ensure the port value matches what is published in your connector's docker compose file.
+-
+-```env title="my_subgraph/.env.my_subgraph"
+-MY_SUBGRAPH_my_mysql_READ_URL=http://local.hasura.dev:8081
+-MY_SUBGRAPH_my_mysql_WRITE_URL=http://local.hasura.dev:8081
+-```
+-
+-### 5. Start the connector's docker compose
+-
+-Let's start our connector's docker compose file.
+-
+-```bash title="Run the following from the connector's subdirectory inside a subgraph:"
+-docker compose -f docker-compose.my_mysql.yaml up
+-```
+-
+-This starts our MySQL connector on the specified port. We can navigate to the following address, with the port
+-modified, to see the schema of our MySQL data source:
+-
+-```bash
+-http://localhost:8081/schema
+-```
+-
+-### 6. Include the connector in your docker compose
+-
+-Kill the connector by pressing `CTRL+C` in the terminal tab in which the connector is running.
+-
+-Then, add the following inclusion to the docker compose `docker-compose.hasura.yaml` in your project's root directory,
+-taking care to modify the
+-subgraph's name.
+-
+-```yaml title="docker-compose.hasura.yaml"
+-include:
+-  - path: my_subgraph/connector/my_mysql/docker-compose.my_mysql.yaml
+-```
+-
+-Now, whenever running the following, you'll bring up the GraphQL engine, observability tools, and any connectors you've
+-included:
+-
+-```bash title="From the root of your project, run:"
+-HASURA_DDN_PAT=$(ddn auth print-pat) docker compose -f docker-compose.hasura.yaml watch
+-```
+-
+-### 7. Update the new DataConnectorLink object
+-
+-Finally, now that our `DataConnectorLink` has the correct environment variables configured for the MySQL connector,
+-we can run the update command to have the CLI look at the configuration JSON and transform it to reflect our database's
+-schema in `hml` format. In a new terminal tab, run:
+-
+-```bash title="From the root of your project, run:"
+-ddn connector-link update my_mysql --subgraph my_subgraph
+-```
+-
+-After this command runs, you can open your `my_subgraph/metadata/my_mysql.hml` file and see your metadata completely
+-scaffolded out for you 🎉
+-
+-### 8. Import _all_ your indices
+-
+-You can do this in one convenience command.
+-
+-```bash title="From the root of your project, run:"
+-ddn connector-link update my_mysql --subgraph my_subgraph --add-all-resources
+-```
+-
+-### 9. Create a supergraph build
+-
+-Pass the `local` subcommand along with specifying the output directory as `./engine` in the root of the project. This
+-directory is used by the docker-compose file to serve the engine locally:
+-
+-```bash title="From the root of your project, run:"
+-ddn supergraph build local --output-dir ./engine
+-```
+-
+-You can now navigate to
+-[`https://console.hasura.io/local/graphql?url=http://localhost:3000`](https://console.hasura.io/local/graphql?url=http://localhost:3000)
+-and interact with your API using the Hasura Console.
+-
+-
+-## License
+-
+-The Hasura MySQL connector is available under the [Apache License
+-2.0](https://www.apache.org/licenses/LICENSE-2.0).
+\ No newline at end of file
+--- a/ndc-connector-mysql/build.gradle.kts
++++ /dev/null
+@@ -1,77 +0,0 @@
+-import org.jetbrains.kotlin.builtins.StandardNames.FqNames.set
+-
+-plugins {
+-    kotlin("jvm")
+-    kotlin("plugin.allopen")
+-    id("io.quarkus")
+-}
+-
+-group = "io.hasura"
+-version = properties["version"] as String
+-
+-repositories {
+-    mavenLocal()
+-    mavenCentral()
+-    maven {
+-        url = uri("https://repo.jooq.org/repo")
+-        credentials {
+-            username = env.fetch("JOOQ_PRO_EMAIL")
+-            password = env.fetch("JOOQ_PRO_LICENSE")
+-        }
+-    }
+-}
+-
+-val quarkusPlatformGroupId: String by project
+-val quarkusPlatformArtifactId: String by project
+-val quarkusPlatformVersion: String by project
+-
+-dependencies {
+-    implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
+-
+-    // Hasura app components
+-    implementation(project(":ndc-ir"))
+-    implementation(project(":ndc-app"))
+-
+-    // JDBC driver
+-    implementation("io.quarkus:quarkus-jdbc-mysql")
+-
+-    implementation("org.jooq.pro:jooq:3.19.8")
+-    modules {
+-        module("org.jooq:jooq") {
+-            replacedBy("org.jooq.pro:jooq", "Oracle requires jOOQ pro")
+-        }
+-    }
+-}
+-
+-tasks.withType<Test> {
+-    systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
+-}
+-allOpen {
+-    annotation("jakarta.ws.rs.Path")
+-    annotation("jakarta.enterprise.context.ApplicationScoped")
+-    annotation("io.quarkus.test.junit.QuarkusTest")
+-}
+-
+-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+-    kotlinOptions.jvmTarget = JavaVersion.VERSION_21.toString()
+-    kotlinOptions.javaParameters = true
+-}
+-
+-tasks.quarkusDev.configure {
+-    jvmArgs = listOf(
+-        "-Djava.net.preferIPv4Stack=true",
+-        "-Djava.net.preferIPv4Addresses=true",
+-        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+-        "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
+-        "--add-opens", "java.base/java.nio=ALL-UNNAMED"
+-    )
+-}
+-
+-
+-java {
+-    toolchain {
+-        languageVersion.set(JavaLanguageVersion.of(21))
+-    }
+-}
+-
+-
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/JSONGenerator.kt
++++ /dev/null
+@@ -1,564 +0,0 @@
+-package io.hasura.mysql
+-
+-import io.hasura.ndc.ir.*
+-import io.hasura.ndc.ir.Field.ColumnField
+-import io.hasura.ndc.ir.Field as IRField
+-import io.hasura.ndc.sqlgen.BaseQueryGenerator
+-import io.hasura.ndc.sqlgen.DatabaseType
+-import org.jooq.*
+-import org.jooq.Field
+-import org.jooq.impl.DSL
+-
+-
+-fun tojOOQName(name: String): Name {
+-    return DSL.name(name.split("."))
+-}
+-
+-fun tojOOQName(name: String, vararg parts: String): Name {
+-    return DSL.name(name.split(".") + parts.toList())
+-}
+-
+-object JsonQueryGenerator : BaseQueryGenerator() {
+-
+-    override fun forEachQueryRequestToSQL(request: QueryRequest): Select<*> {
+-        return DSL
+-            .with(buildVarsCTE(request))
+-            .select(
+-                DSL.jsonArrayAgg(
+-                    buildJSONSelectionForQueryRequest(request)
+-                )
+-            )
+-            .from(
+-                DSL.table(DSL.name("vars"))
+-            )
+-    }
+-
+-    override fun queryRequestToSQL(request: QueryRequest): Select<*> {
+-        return queryRequestToSQLInternal(request)
+-    }
+-
+-    private fun queryRequestToSQLInternal(
+-        request: QueryRequest,
+-    ): SelectSelectStep<*> {
+-        // JOOQ is smart enough to not generate CTEs if there are no native queries
+-        return mkNativeQueryCTEs(request).select(
+-            DSL.jsonArrayAgg(
+-                buildJSONSelectionForQueryRequest(request)
+-            )
+-        )
+-    }
+-
+-    fun buildJSONSelectionForQueryRequest(
+-        request: QueryRequest,
+-        parentTable: String? = null,
+-        parentRelationship: Relationship? = null,
+-        // Unique alias for this subquery's table reference. When the relationship source and target are
+-        // the same collection (self-join), passing a distinct alias prevents both sides of the JOIN
+-        // condition from resolving to the same table, which would make MySQL silently return no rows.
+-        collectionAlias: String? = null
+-    ): JSONObjectNullStep<*> {
+-        val effectiveAlias = collectionAlias ?: request.collection
+-
+-        // When a unique alias is provided, alias the FROM table so that the outer table name remains
+-        // visible in the correlated WHERE clause (e.g. FROM regions AS parentRegion_regions).
+-        val baseTable = if (collectionAlias != null) {
+-            DSL.table(tojOOQName(request.collection)).`as`(DSL.name(effectiveAlias))
+-        } else {
+-            DSL.table(tojOOQName(request.collection))
+-        }
+-
+-        val baseQuery = DSL.select(
+-            baseTable.asterisk()
+-        ).select(
+-            getSelectOrderFields(request, effectiveAlias)
+-        ).from(
+-            baseTable
+-        )
+-
+-        addJoinsRequiredForOrderByFields2(baseQuery, request, effectiveAlias)
+-
+-        if (parentRelationship != null && parentTable != null) {
+-            baseQuery.where(
+-                mkJoinWhereClause(parentTable, parentRelationship, effectiveAlias)
+-            )
+-        }
+-
+-        if (request.query.predicate != null) {
+-            // Use the SQL-alias-aware variant so that empty-path column references in the
+-            // predicate are qualified with `effectiveAlias` (matching the FROM clause), while
+-            // connector-config lookups (e.g. column types) still use the real collection name
+-            // stored in `request.collection`. Without this split, an aliased self-join's WHERE
+-            // clause would attempt a config lookup keyed by the alias and fail with
+-            // "Collection <alias> not found in connector configuration".
+-            baseQuery.where(
+-                expressionToConditionWithSqlAlias(request.query.predicate!!, request, effectiveAlias)
+-            )
+-
+-            val requiredJoinTables = collectRequiredJoinTablesForWhereClause(
+-                rootTable = effectiveAlias,
+-                where = request.query.predicate!!,
+-                collectionRelationships = request.collection_relationships
+-            )
+-
+-            requiredJoinTables.forEach { relationshipInfo ->
+-                val relationship = request.collection_relationships[relationshipInfo.relationshipName]
+-                    ?: error("Relationship ${relationshipInfo.relationshipName} not found")
+-
+-                baseQuery.leftJoin(
+-                    DSL.table(tojOOQName(relationship.target_collection))
+-                ).on(
+-                    mkSQLJoin2(
+-                        rel = relationship,
+-                        sourceCollection = relationshipInfo.fromTable,
+-                        targetTableNameTransform = { relationshipInfo.toTable }
+-                    )
+-                )
+-            }
+-
+-            // If requiredJoinTables is non-empty, we must add the primary key of the parent table to GROUP BY
+-            // to prevent duplicate rows
+-            if (requiredJoinTables.isNotEmpty()) {
+-                baseQuery.groupBy(
+-                    getSelectOrderFields(request, effectiveAlias)
+-                )
+-            }
+-
+-        }
+-        if (request.query.order_by != null) {
+-            baseQuery.orderBy(
+-                translateIROrderByField(
+-                    orderBy = request.query.order_by,
+-                    currentCollection = effectiveAlias,
+-                    relationships = request.collection_relationships
+-                )
+-            )
+-        }
+-        if (request.query.limit != null) {
+-            baseQuery.limit(request.query.limit)
+-        }
+-        if (request.query.offset != null) {
+-            baseQuery.offset(request.query.offset)
+-        }
+-
+-        val baseSelection = baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
+-
+-        return DSL.jsonObject(
+-            buildList {
+-                if (!request.query.fields.isNullOrEmpty()) {
+-                    add(
+-                        DSL.jsonEntry(
+-                            "rows",
+-                            DSL.select(
+-                                DSL.nvl(
+-                                    DSL.jsonArrayAgg(
+-                                        DSL.jsonObject(
+-                                            (request.query.fields ?: emptyMap()).map { (alias, field) ->
+-                                                when (field) {
+-                                                    is ColumnField -> {
+-                                                        val columnField = DSL.field(DSL.name(field.column))
+-                                                        val (columnType, ndcScalar) = columnTypeTojOOQType(
+-                                                            MySQLJDBCSchemaGenerator::mapScalarType,
+-                                                            request.collection,
+-                                                            field
+-                                                        )
+-                                                        val castedField = castToSQLDataType(
+-                                                            DatabaseType.MYSQL,
+-                                                            columnField,
+-                                                            ndcScalar
+-                                                        )
+-                                                        DSL.jsonEntry(
+-                                                            alias,
+-                                                            castedField
+-                                                        )
+-                                                    }
+-
+-                                                    is IRField.RelationshipField -> {
+-                                                        val relationship =
+-                                                            request.collection_relationships[field.relationship]
+-                                                                ?: error("Relationship ${field.relationship} not found")
+-
+-                                                        // Derive a unique inner alias from the field alias and target
+-                                                        // collection. This ensures the inner subquery is never aliased
+-                                                        // the same as the outer table, which would make both sides of a
+-                                                        // self-join WHERE condition resolve to the same scope.
+-                                                        val innerAlias = "${alias}_${relationship.target_collection}"
+-                                                            .replace(".", "_")
+-
+-                                                        val subQuery = buildJSONSelectionForQueryRequest(
+-                                                            parentTable = effectiveAlias,
+-                                                            parentRelationship = relationship,
+-                                                            collectionAlias = innerAlias,
+-                                                            request = QueryRequest(
+-                                                                collection = relationship.target_collection,
+-                                                                collection_relationships = request.collection_relationships,
+-                                                                query = field.query,
+-                                                                arguments = field.arguments,
+-                                                                variables = null
+-                                                            )
+-                                                        )
+-
+-                                                        DSL.jsonEntry(
+-                                                            alias,
+-                                                            DSL.coalesce(
+-                                                                DSL.select(subQuery),
+-                                                                DSL.jsonObject(
+-                                                                    DSL.jsonEntry(
+-                                                                        "rows",
+-                                                                        DSL.jsonArray()
+-                                                                    )
+-                                                                )
+-                                                            )
+-                                                        )
+-                                                    }
+-                                                }
+-                                            }
+-                                        )
+-                                    ).orderBy(
+-                                        getConcatOrderFields(request, effectiveAlias)
+-                                    ),
+-                                    DSL.jsonArray()
+-                                )
+-                            ).from(
+-                                baseSelection
+-                            )
+-                        )
+-                    )
+-                }
+-                if (!request.query.aggregates.isNullOrEmpty()) {
+-                    add(
+-                        DSL.jsonEntry(
+-                            "aggregates",
+-                            DSL.select(
+-                                DSL.nvl(
+-                                    DSL.jsonObject(
+-                                        (request.query.aggregates ?: emptyMap()).map { (alias, aggregate) ->
+-                                            DSL.jsonEntry(
+-                                                alias,
+-                                                getAggregatejOOQFunction(aggregate)
+-                                            )
+-                                        }
+-                                    ),
+-                                    DSL.jsonObject()
+-                                )
+-                            ).from(
+-                                baseSelection
+-                            )
+-                        )
+-                    )
+-                }
+-            }
+-        )
+-    }
+-
+-    data class RelationshipInfo(
+-        val fromTable: String,
+-        val toTable: String,
+-        val relationshipName: String,
+-    )
+-
+-    // Collect the required relationships from "column.path" and "value.path"
+-    private fun collectRequiredJoinTablesForWhereClause(
+-        rootTable: String,
+-        where: Expression,
+-        collectionRelationships: Map<String, Relationship>
+-    ): Set<RelationshipInfo> {
+-        val requiredRelationships = mutableSetOf<RelationshipInfo>()
+-        var currentTable = rootTable
+-
+-        fun collectFromExpression(expression: Expression) {
+-            fun collectFromPath(path: List<PathElement>) {
+-                path.forEach { pathElement ->
+-                    val relationshipName = pathElement.relationship
+-                    val relationship = collectionRelationships[relationshipName]
+-                        ?: error("Relationship $relationshipName not found")
+-
+-                    if (currentTable != relationship.target_collection) {
+-                        requiredRelationships.add(
+-                            RelationshipInfo(
+-                                fromTable = currentTable,
+-                                toTable = relationship.target_collection,
+-                                relationshipName = relationshipName
+-                            )
+-                        )
+-                    }
+-                    currentTable = relationship.target_collection
+-
+-                    // Recursively collect from the predicate of the path element
+-                    collectFromExpression(pathElement.predicate)
+-                }
+-            }
+-
+-            when (expression) {
+-                is Expression.ApplyBinaryComparison -> {
+-                    if (expression.column is ComparisonTarget.Column) {
+-                        val columnPath = (expression.column as ComparisonTarget.Column).path
+-                        collectFromPath(columnPath)
+-                    }
+-                    if (expression.value is ComparisonValue.ColumnComp) {
+-                        val value = (expression.value as ComparisonValue.ColumnComp)
+-                        if (value.column is ComparisonTarget.Column) {
+-                            val columnPath = (value.column as ComparisonTarget.Column).path
+-                            collectFromPath(columnPath)
+-                        }
+-                    }
+-                }
+-
+-                is Expression.And -> expression.expressions.forEach { collectFromExpression(it) }
+-                is Expression.Or -> expression.expressions.forEach { collectFromExpression(it) }
+-                is Expression.Not -> collectFromExpression(expression.expression)
+-                else -> {}
+-            }
+-        }
+-
+-        collectFromExpression(where)
+-        return requiredRelationships.distinctBy { it.relationshipName }.toSet()
+-    }
+-
+-    private fun getAggregatejOOQFunction(aggregate: Aggregate) = when (aggregate) {
+-        is Aggregate.StarCount -> DSL.count()
+-        is Aggregate.SingleColumn -> {
+-            val col = DSL.field(DSL.name(aggregate.column)) as Field<Number>
+-            when (aggregate.function) {
+-                SingleColumnAggregateFunction.AVG -> DSL.avg(col)
+-                SingleColumnAggregateFunction.MAX -> DSL.max(col)
+-                SingleColumnAggregateFunction.MIN -> DSL.min(col)
+-                SingleColumnAggregateFunction.COUNT -> DSL.count(col)
+-                SingleColumnAggregateFunction.SUM -> DSL.sum(col)
+-                SingleColumnAggregateFunction.STDDEV_POP -> DSL.stddevPop(col)
+-                SingleColumnAggregateFunction.STDDEV_SAMP -> DSL.stddevSamp(col)
+-                SingleColumnAggregateFunction.VAR_POP -> DSL.varPop(col)
+-                SingleColumnAggregateFunction.VAR_SAMP -> DSL.varSamp(col)
+-            }
+-        }
+-
+-        is Aggregate.ColumnCount -> {
+-            val col = DSL.field(DSL.name(aggregate.column))
+-            if (aggregate.distinct) DSL.countDistinct(col) else DSL.count(col)
+-        }
+-    }
+-
+-    private fun mkJoinWhereClause(
+-        sourceTable: String,
+-        parentRelationship: Relationship,
+-        // Alias used for the inner (target) table. Defaults to the target collection name,
+-        // which preserves existing behaviour for cross-table relationships. For self-joins this
+-        // must differ from sourceTable so that both sides of the condition are unambiguous.
+-        innerAlias: String = parentRelationship.target_collection
+-    ) = DSL.and(
+-        parentRelationship.column_mapping.map { (from, to) ->
+-            val childField = DSL.field(tojOOQName(sourceTable, from))
+-            val parentField = DSL.field(tojOOQName(innerAlias, to))
+-            childField.eq(parentField)
+-        }
+-    )
+-
+-
+-    private const val ORDER_FIELD_SUFFIX = "_order_field"
+-
+-    private fun getSelectOrderFields(
+-        request: QueryRequest,
+-        currentCollection: String = request.collection
+-    ): List<Field<*>> {
+-        val sortFields = translateIROrderByField(
+-            orderBy = request.query.order_by,
+-            currentCollection = currentCollection,
+-            relationships = request.collection_relationships
+-        )
+-        return sortFields.map {
+-            // Use the qualified name (which includes the table name) to ensure uniqueness
+-            val field = it.`$field`()
+-            val qualifiedName = field.qualifiedName.toString().replace("\"", "")
+-            field.`as`(qualifiedName + ORDER_FIELD_SUFFIX)
+-        }
+-    }
+-
+-    private fun getConcatOrderFields(
+-        request: QueryRequest,
+-        currentCollection: String = request.collection
+-    ): List<SortField<*>> {
+-        val sortFields = translateIROrderByField(
+-            orderBy = request.query.order_by,
+-            currentCollection = currentCollection,
+-            relationships = request.collection_relationships
+-        )
+-        return sortFields.map {
+-            // Use the qualified name (which includes the table name) to ensure uniqueness
+-            val field = it.`$field`()
+-            val qualifiedName = field.qualifiedName.toString().replace("\"", "")
+-            val orderField = DSL.field(DSL.name(qualifiedName + ORDER_FIELD_SUFFIX))
+-            when (it.order) {
+-                SortOrder.ASC -> orderField.asc().nullsLast()
+-                SortOrder.DESC -> orderField.desc().nullsFirst()
+-                else -> orderField.asc().nullsLast()
+-            }
+-        }
+-    }
+-
+-    fun addJoinsRequiredForOrderByFields2(
+-        select: SelectJoinStep<*>,
+-        request: QueryRequest,
+-        sourceCollection: String = request.collection
+-    ) {
+-        val seenRelations = mutableSetOf<List<String>>()
+-        request.query.order_by?.elements?.forEach { orderByElement ->
+-            if (orderByElement.target.path.isNotEmpty()) {
+-                var currentCollection = sourceCollection
+-                var currentTableName = sourceCollection
+-
+-                // Process each relationship in path sequentially
+-                orderByElement.target.path.forEachIndexed { index, pathElem ->
+-                    val relationshipName = pathElem.relationship
+-                    val relChain = listOf(currentCollection, relationshipName)
+-
+-                    if (!seenRelations.contains(relChain)) {
+-                        seenRelations.add(relChain)
+-
+-                        val relationship = request.collection_relationships[relationshipName]
+-                            ?: throw Exception("Relationship not found")
+-
+-                        val forwardJoinKeys = if (index + 1 < orderByElement.target.path.size) {
+-                            val nextPathElem = orderByElement.target.path[index + 1]
+-                            val nextRelationshipName = nextPathElem.relationship
+-                            val nextRelationship = request.collection_relationships[nextRelationshipName]
+-                                ?: throw Exception("Relationship '$nextRelationshipName' not found for next step")
+-                            nextRelationship.column_mapping.keys.map { sourceColumnInNextMapping ->
+-                                DSL.field(tojOOQName(sourceColumnInNextMapping))
+-                            }
+-                        } else {
+-                            emptyList()
+-                        }
+-
+-                        when (relationship.relationship_type) {
+-                            RelationshipType.Object -> {
+-                                select.leftJoin(
+-                                    DSL.table(tojOOQName(relationship.target_collection))
+-                                ).on(
+-                                    mkSQLJoin2(
+-                                        rel = relationship,
+-                                        sourceCollection = currentTableName,
+-                                    )
+-                                )
+-                                // Update current table name for the next join
+-                                currentTableName = relationship.target_collection
+-                            }
+-
+-                            RelationshipType.Array -> {
+-                                val aggregateTableAlias = "${relationshipName}_aggregate"
+-                                val orderByWhereCondition = expressionToCondition(
+-                                    pathElem.predicate,
+-                                    request.copy(
+-                                        collection = relationship.target_collection,
+-                                    )
+-                                )
+-                                select.leftJoin(
+-                                    mkAggregateSubquery2(
+-                                        elem = orderByElement,
+-                                        relationship = relationship,
+-                                        whereCondition = orderByWhereCondition,
+-                                        forwardJoinKeys = forwardJoinKeys,
+-                                    ).asTable(
+-                                        DSL.name(aggregateTableAlias)
+-                                    )
+-                                ).on(
+-                                    mkSQLJoin2(
+-                                        rel = relationship,
+-                                        sourceCollection = currentTableName,
+-                                        targetTableNameTransform = { aggregateTableAlias }
+-                                    )
+-                                )
+-                                // Update current table name for the next join
+-                                currentTableName = aggregateTableAlias
+-                            }
+-                        }
+-
+-                        // Add predicate condition for the path element only for object relationships; for aggregates it's handled inside the subquery
+-                        if (pathElem.predicate != Expression.And(emptyList()) && relationship.relationship_type == RelationshipType.Object) {
+-                            select.where(
+-                                expressionToCondition(
+-                                    pathElem.predicate,
+-                                    request.copy(
+-                                        collection = relationship.target_collection,
+-                                    )
+-                                )
+-                            )
+-                        }
+-                    }
+-
+-                    val relationship = request.collection_relationships[relationshipName]
+-                        ?: throw Exception("Relationship not found")
+-
+-                    currentCollection = relationship.target_collection
+-                }
+-            }
+-        }
+-    }
+-
+-    fun mkSQLJoin2(
+-        rel: Relationship,
+-        sourceCollection: String,
+-        targetTableNameTransform: (String) -> String = { it },
+-    ): Condition {
+-        val targetTableFQN = targetTableNameTransform(rel.target_collection)
+-        return DSL.and(
+-            rel.column_mapping.map { (sourceColumn, targetColumn) ->
+-                DSL.field(tojOOQName(sourceCollection, sourceColumn))
+-                    .eq(DSL.field(tojOOQName(targetTableFQN, targetColumn)))
+-            }
+-                    + rel.arguments.map { (targetColumn, argument) ->
+-                DSL.field(tojOOQName(sourceCollection, (argument as Argument.Column).name))
+-                    .eq(DSL.field(tojOOQName(targetTableFQN, targetColumn)))
+-            }
+-        )
+-    }
+-
+-
+-    fun mkAggregateSubquery2(
+-        elem: OrderByElement,
+-        relationship: Relationship,
+-        whereCondition: Condition,
+-        forwardJoinKeys: List<Field<*>> = emptyList(),
+-    ): SelectHavingStep<Record> {
+-        // If the target is a star-count aggregate, we need to select the special aggregate_count field
+-        // Otherwise, it's a regular aggregate, so our "SELECT *" will give us access to it in the other
+-        // parts of the query
+-        val orderElem = when (val target = elem.target) {
+-            is OrderByTarget.OrderByStarCountAggregate -> {
+-                listOf(DSL.count().`as`(DSL.name("aggregate_field")))
+-            }
+-
+-            is OrderByTarget.OrderBySingleColumnAggregate -> {
+-                val aggregate = Aggregate.SingleColumn(target.column, target.function)
+-                listOf(translateIRAggregateField(aggregate).`as`(DSL.name("aggregate_field")))
+-            }
+-
+-            else -> {
+-                emptyList()
+-            }
+-        }
+-
+-        fun mkJoinKeyFields2(
+-            rel: Relationship?,
+-        ): List<Field<Any>> {
+-            return if (rel == null)
+-                emptyList()
+-            else if (rel.column_mapping.isNotEmpty())
+-                rel.column_mapping.values.map { DSL.field(tojOOQName(rel.target_collection, it)) }
+-            else if (rel.arguments.isNotEmpty())
+-                rel.arguments.keys.map { DSL.field(DSL.name(it)) }
+-            else emptyList()
+-        }
+-
+-        val joinCols = mkJoinKeyFields2(relationship) + forwardJoinKeys
+-
+-        // Select fields that need to be present in order for the ORDER BY clause to work
+-        return DSL.select(
+-            orderElem + joinCols
+-        ).from(
+-            DSL.table(tojOOQName(relationship.target_collection))
+-        ).where(
+-            whereCondition
+-        ).groupBy(
+-            joinCols
+-        )
+-    }
+-}
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLDataConnectorService.kt
++++ /dev/null
+@@ -1,70 +0,0 @@
+-package io.hasura.mysql
+-
+-import com.fasterxml.jackson.module.kotlin.readValue
+-import io.hasura.ndc.app.interfaces.IDataSourceProvider
+-import io.hasura.ndc.app.services.dataConnectors.BaseDataConnectorService
+-import io.hasura.ndc.ir.*
+-import io.hasura.ndc.sqlgen.MutationTranslator
+-import io.opentelemetry.api.trace.Tracer
+-import jakarta.annotation.Priority
+-import jakarta.enterprise.inject.Alternative
+-import jakarta.inject.Inject
+-import jakarta.inject.Singleton
+-import org.jooq.SQLDialect
+-
+-@Singleton
+-@Alternative
+-@Priority(1)
+-class MySQLDataConnectorService @Inject constructor(
+-    tracer: Tracer,
+-    datasourceProvider: IDataSourceProvider
+-) : BaseDataConnectorService(
+-    tracer,
+-    MySQLJDBCSchemaGenerator,
+-    datasourceProvider
+-) {
+-
+-    override val capabilitiesResponse = CapabilitiesResponse(
+-        version = "0.1.6",
+-        capabilities = Capabilities(
+-            query = QueryCapabilities(
+-                aggregates = mapOf(),
+-                variables = mapOf(),
+-                explain = mapOf()
+-            ),
+-            mutation = MutationCapabilities(),
+-            relationships = RelationshipsCapabilities(
+-                relation_comparisons = mapOf(),
+-                order_by_aggregate = mapOf()
+-            )
+-        )
+-    )
+-
+-    override fun handleQuery(request: QueryRequest): List<RowSet> {
+-        val dslCtx = mkDSLCtx(request.request_arguments)
+-
+-        // Check whether the QueryRequest has predicates referencing variables, and if so, that variables are provided
+-        // This case is checked in the test "select_where_with_no_variable_values"
+-        val hasVariables = objectMapper.writeValueAsString(request).contains("\"type\":\"variable\"")
+-        if (hasVariables && request.variables.isNullOrEmpty()) {
+-            return emptyList()
+-        }
+-
+-        val query = if (!request.variables.isNullOrEmpty()) {
+-            JsonQueryGenerator.forEachQueryRequestToSQL(request)
+-        } else {
+-            JsonQueryGenerator.queryRequestToSQL(request)
+-        }
+-
+-        val rows = executeDbQuery(query, dslCtx)
+-        val json = rows.getValue(0, 0).toString()
+-
+-        val rowsets = objectMapper.readValue<List<RowSet>>(json)
+-        return rowsets
+-    }
+-
+-    override val jooqDialect = SQLDialect.MYSQL_8_0_31
+-    override val jooqSettings = commonDSLContextSettings
+-    override val sqlGenerator = JsonQueryGenerator
+-    override val mutationTranslator = MutationTranslator
+-}
+--- a/ndc-connector-mysql/src/main/kotlin/io/hasura/mysql/MySQLJDBCSchemaGenerator.kt
++++ /dev/null
+@@ -1,303 +0,0 @@
+-package io.hasura.mysql
+-
+-import io.hasura.ndc.app.services.JDBCSchemaGenerator
+-import io.hasura.ndc.common.NDCScalar
+-import io.hasura.ndc.ir.AggregateFunctionDefinition
+-import io.hasura.ndc.ir.ComparisonOperatorDefinition
+-import io.hasura.ndc.ir.ScalarRepresentation
+-import io.hasura.ndc.ir.ScalarType
+-import io.hasura.ndc.ir.Type
+-
+-object MySQLJDBCSchemaGenerator : JDBCSchemaGenerator() {
+-
+-    override fun getScalars(): Map<String, ScalarType> {
+-        return mapOf(
+-            NDCScalar.BOOLEAN.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.BOOLEAN),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.STRING.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.STRING),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_contains" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.STRING.name)),
+-                    "_like" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.STRING.name)),
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.STRING.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.STRING.name))
+-                )
+-            ),
+-            NDCScalar.INT8.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.INT8),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT8.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT8.name))
+-                )
+-            ),
+-            NDCScalar.INT16.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.INT16),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT16.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT16.name))
+-                )
+-            ),
+-            NDCScalar.INT32.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.INT32),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT32.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT32.name))
+-                )
+-            ),
+-            NDCScalar.INT64.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.INT64),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name))
+-                )
+-            ),
+-            NDCScalar.FLOAT32.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.FLOAT32),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name))
+-                )
+-            ),
+-            NDCScalar.FLOAT64.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.FLOAT64),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name))
+-                )
+-            ),
+-            NDCScalar.BIGINTEGER.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.BIGINTEGER),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name))
+-                )
+-            ),
+-            NDCScalar.BIGDECIMAL.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.BIGDECIMAL),
+-                comparison_operators = mapOf(
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = mapOf(
+-                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
+-                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
+-                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
+-                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name))
+-                )
+-            ),
+-            NDCScalar.UUID.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.UUID),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.DATE.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.DATE),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.TIMESTAMP.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.TIMESTAMP),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.TIMESTAMPTZ.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.TIMESTAMPTZ),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
+-                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
+-                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
+-                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
+-                    "_in" to ComparisonOperatorDefinition.In
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.GEOGRAPHY.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.GEOGRAPHY),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.GEOMETRY.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.GEOMETRY),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.BYTES.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.BYTES),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal
+-                ),
+-                aggregate_functions = emptyMap()
+-            ),
+-            NDCScalar.JSON.name to ScalarType(
+-                representation = ScalarRepresentation(NDCScalar.JSON),
+-                comparison_operators = mapOf(
+-                    "_eq" to ComparisonOperatorDefinition.Equal,
+-                ),
+-                aggregate_functions = emptyMap()
+-            )
+-        )
+-    }
+-
+-    // TODO: Proper types for MySQL rather then strings
+-    override fun mapScalarType(columnTypeStr: String, numericPrecision: Int?, numericScale: Int?): NDCScalar {
+-        return when {
+-            columnTypeStr.uppercase().startsWith("BIT") -> {
+-                when (numericPrecision) {
+-                    1 -> NDCScalar.BOOLEAN
+-                    else -> NDCScalar.BYTES
+-                }
+-            }
+-            else -> when (columnTypeStr.uppercase()) {
+-                // Integer Types
+-                "TINYINT" -> NDCScalar.INT8
+-                "SMALLINT" -> NDCScalar.INT16
+-                "MEDIUMINT" -> NDCScalar.INT32
+-                "INT", "INTEGER" -> NDCScalar.INT32
+-                "BIGINT" -> NDCScalar.INT64
+-    
+-                // Floating-Point Types
+-                "FLOAT" -> NDCScalar.FLOAT32
+-                "DOUBLE" -> NDCScalar.FLOAT64
+-    
+-                // Numeric and Decimal Types
+-                "DECIMAL", "NUMERIC" -> {
+-                    if (numericScale == 0) {
+-                        NDCScalar.BIGINTEGER // Integer-like numeric without scale
+-                    } else {
+-                        NDCScalar.BIGDECIMAL // Numeric with scale
+-                    }
+-                }
+-    
+-                // Date and Time Types
+-                "DATE" -> NDCScalar.DATE
+-                "DATETIME" -> NDCScalar.TIMESTAMP
+-                "TIME" -> NDCScalar.TIMESTAMP
+-                "TIMESTAMP" -> NDCScalar.TIMESTAMPTZ
+-    
+-                // String Types
+-                "CHAR", "VARCHAR", "TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT" -> NDCScalar.STRING
+-    
+-                // Binary Types
+-                "BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB" -> NDCScalar.BYTES
+-    
+-                // JSON Type
+-                "JSON" -> NDCScalar.JSON
+-    
+-                // Default Fallback
+-                else -> NDCScalar.JSON
+-            }
+-        }
+-    }
+-}
+--- a/ndc-connector-mysql/src/main/resources/application.properties
++++ /dev/null
+@@ -1,2 +0,0 @@
+-datasource.name=mysql
+-quarkus.otel.service.name=${OTEL_SERVICE_NAME:ndc-mysql}
+\ No newline at end of file
+--- /dev/null
++++ b/ndc-connector-postgresql/README.md
+@@ -0,0 +1,169 @@
++# MySQL Connector
++
++[![Docs](https://img.shields.io/badge/docs-v3.x-brightgreen.svg?style=flat)](https://hasura.io/docs/3.0/getting-started/overview/)
++[![ndc-hub](https://img.shields.io/badge/ndc--hub-sqlserver-blue.svg?style=flat)](https://hasura.io/connectors/sqlserver)
++[![License](https://img.shields.io/badge/license-Apache--2.0-purple.svg?style=flat)](LICENSE.txt)
++[![Status](https://img.shields.io/badge/status-alpha-yellow.svg?style=flat)](./readme.md)
++
++With this connector, Hasura allows you to instantly create a real-time GraphQL API on top of your data models in
++MySQL. This connector supports MySQL's functionalities listed in the table below, allowing for
++efficient and scalable data operations. Additionally, users benefit from all the powerful features of Hasura’s Data
++Delivery Network (DDN) platform, including query pushdown capabilities that delegate query operations to the database,
++thereby enhancing query optimization and performance.
++
++This connector implements the [Data Connector Spec](https://github.com/hasura/ndc-spec).
++
++- [Connector information in the Hasura Hub](https://hasura.io/connectors/MySQL)
++- [Hasura V3 Documentation](https://hasura.io/docs/3.0)
++
++## Features
++
++Below, you'll find a matrix of all supported features for the MySQL connector:
++
++| Feature                         | Supported | Notes |
++|---------------------------------|-----------|-------|
++| Native Queries + Logical Models | ✅         |       |
++| Native Mutations                | ❌         |       |
++| Simple Object Query             | ✅         |       |
++| Filter / Search                 | ✅         |       |
++| Simple Aggregation              | ✅         |       |
++| Sort                            | ✅         |       |
++| Paginate                        | ✅         |       |
++| Table Relationships             | ✅         |       |
++| Views                           | ✅         |       |
++| Remote Relationships            | ✅         |       |
++| Custom Fields                   | ❌         |       |
++| Mutations                       | ❌         |       |
++| Distinct                        | ❌         |       |
++| Enums                           | ❌         |       |
++| Naming Conventions              | ❌         |       |
++| Default Values                  | ❌         |       |
++| User-defined Functions          | ❌         |       |
++
++## Before you get Started
++
++1. Create a [Hasura Cloud account](https://console.hasura.io)
++2. Install the [CLI](https://hasura.io/docs/3.0/cli/installation/)
++3. Install the [Hasura VS Code extension](https://marketplace.visualstudio.com/items?itemName=HasuraHQ.hasura)
++4. [Create a supergraph](https://hasura.io/docs/3.0/getting-started/init-supergraph)
++5. [Create a subgraph](https://hasura.io/docs/3.0/getting-started/init-subgraph)
++
++## Using the connector
++
++To use the MySQL connector, follow these steps in a Hasura project:
++(Note: for more information on the following steps, please refer to the Postgres connector
++documentation [here](https://hasura.io/docs/3.0/getting-started/connect-to-data/connect-a-source))
++
++### 1. Init the connector
++
++(Note: here and following we are naming the subgraph "my_subgraph" and the connector "my_mysql")
++
++   ```bash
++   ddn connector init my_mysql --subgraph my_subgraph --hub-connector hasura/MySQL
++   ```
++
++### 2. Add your MySQL credentials:
++
++Add your credentials to `my_subgraph/connector/my_sql/.env.local`
++
++```env title="my_subgraph/connector/my_mysql/.env.local"
++JDBC_URL="jdbc:MySQL:thin:@//host.docker.internal:1521/XE?user=<user>&password=<password>"
++```
++
++### 3. Introspect your indices
++
++```bash title="From the root of your project run:"
++ddn connector introspect --connector my_subgraph/connector/my_mysql/connector.yaml
++```
++
++If you look at the `configuration.json` for your connector, you'll see metadata describing your MySQL mappings.
++
++### 4. Create the Hasura metadata
++
++```bash title="Run the following from the root of your project:"
++ddn connector-link add my_mysql --subgraph my_subgraph
++```
++
++The generated file has two environment variables — one for reads and one for writes — that you'll need to add to your
++subgraph's `.env.my_subgraph` file. Each key is prefixed by the subgraph name, an underscore, and the name of the
++connector. Ensure the port value matches what is published in your connector's docker compose file.
++
++```env title="my_subgraph/.env.my_subgraph"
++MY_SUBGRAPH_my_mysql_READ_URL=http://local.hasura.dev:8081
++MY_SUBGRAPH_my_mysql_WRITE_URL=http://local.hasura.dev:8081
++```
++
++### 5. Start the connector's docker compose
++
++Let's start our connector's docker compose file.
++
++```bash title="Run the following from the connector's subdirectory inside a subgraph:"
++docker compose -f docker-compose.my_mysql.yaml up
++```
++
++This starts our MySQL connector on the specified port. We can navigate to the following address, with the port
++modified, to see the schema of our MySQL data source:
++
++```bash
++http://localhost:8081/schema
++```
++
++### 6. Include the connector in your docker compose
++
++Kill the connector by pressing `CTRL+C` in the terminal tab in which the connector is running.
++
++Then, add the following inclusion to the docker compose `docker-compose.hasura.yaml` in your project's root directory,
++taking care to modify the
++subgraph's name.
++
++```yaml title="docker-compose.hasura.yaml"
++include:
++  - path: my_subgraph/connector/my_mysql/docker-compose.my_mysql.yaml
++```
++
++Now, whenever running the following, you'll bring up the GraphQL engine, observability tools, and any connectors you've
++included:
++
++```bash title="From the root of your project, run:"
++HASURA_DDN_PAT=$(ddn auth print-pat) docker compose -f docker-compose.hasura.yaml watch
++```
++
++### 7. Update the new DataConnectorLink object
++
++Finally, now that our `DataConnectorLink` has the correct environment variables configured for the MySQL connector,
++we can run the update command to have the CLI look at the configuration JSON and transform it to reflect our database's
++schema in `hml` format. In a new terminal tab, run:
++
++```bash title="From the root of your project, run:"
++ddn connector-link update my_mysql --subgraph my_subgraph
++```
++
++After this command runs, you can open your `my_subgraph/metadata/my_mysql.hml` file and see your metadata completely
++scaffolded out for you 🎉
++
++### 8. Import _all_ your indices
++
++You can do this in one convenience command.
++
++```bash title="From the root of your project, run:"
++ddn connector-link update my_mysql --subgraph my_subgraph --add-all-resources
++```
++
++### 9. Create a supergraph build
++
++Pass the `local` subcommand along with specifying the output directory as `./engine` in the root of the project. This
++directory is used by the docker-compose file to serve the engine locally:
++
++```bash title="From the root of your project, run:"
++ddn supergraph build local --output-dir ./engine
++```
++
++You can now navigate to
++[`https://console.hasura.io/local/graphql?url=http://localhost:3000`](https://console.hasura.io/local/graphql?url=http://localhost:3000)
++and interact with your API using the Hasura Console.
++
++
++## License
++
++The Hasura MySQL connector is available under the [Apache License
++2.0](https://www.apache.org/licenses/LICENSE-2.0).
+\ No newline at end of file
+--- /dev/null
++++ b/ndc-connector-postgresql/build.gradle.kts
+@@ -0,0 +1,67 @@
++import org.jetbrains.kotlin.builtins.StandardNames.FqNames.set
++
++plugins {
++    kotlin("jvm")
++    kotlin("plugin.allopen")
++    id("io.quarkus")
++}
++
++group = "io.hasura"
++version = properties["version"] as String
++
++repositories {
++    mavenLocal()
++    mavenCentral()
++
++}
++
++val quarkusPlatformGroupId: String by project
++val quarkusPlatformArtifactId: String by project
++val quarkusPlatformVersion: String by project
++
++dependencies {
++    implementation(enforcedPlatform("$quarkusPlatformGroupId:$quarkusPlatformArtifactId:$quarkusPlatformVersion"))
++
++    // Hasura app components
++    implementation(project(":ndc-ir"))
++    implementation(project(":ndc-app"))
++
++    // JDBC driver
++    implementation("io.quarkus:quarkus-jdbc-postgresql")
++
++    implementation("org.jooq:jooq:3.19.8")
++
++}
++
++tasks.withType<Test> {
++    systemProperty("java.util.logging.manager", "org.jboss.logmanager.LogManager")
++}
++allOpen {
++    annotation("jakarta.ws.rs.Path")
++    annotation("jakarta.enterprise.context.ApplicationScoped")
++    annotation("io.quarkus.test.junit.QuarkusTest")
++}
++
++tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
++    kotlinOptions.jvmTarget = JavaVersion.VERSION_21.toString()
++    kotlinOptions.javaParameters = true
++}
++
++tasks.quarkusDev.configure {
++    jvmArgs = listOf(
++        "-Djava.net.preferIPv4Stack=true",
++        "-Djava.net.preferIPv4Addresses=true",
++        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
++        "--add-opens", "java.base/java.lang.invoke=ALL-UNNAMED",
++        "--add-opens", "java.base/java.nio=ALL-UNNAMED"
++    )
++}
++
++
++java {
++    toolchain {
++        languageVersion.set(JavaLanguageVersion.of(21))
++    }
++}
++
++
+--- /dev/null
++++ b/ndc-connector-postgresql/src/main/kotlin/io/hasura/postgresql/JSONGenerator.kt
+@@ -0,0 +1,568 @@
++package io.hasura.postgresql
++
++import io.hasura.ndc.ir.*
++import io.hasura.ndc.ir.Field.ColumnField
++import io.hasura.ndc.ir.Field as IRField
++import io.hasura.ndc.sqlgen.BaseQueryGenerator
++import io.hasura.ndc.sqlgen.DatabaseType
++import org.jooq.*
++import org.jooq.Field
++import org.jooq.impl.DSL
++
++
++fun tojOOQName(name: String): Name {
++    return DSL.name(name.split("."))
++}
++
++fun tojOOQName(name: String, vararg parts: String): Name {
++    return DSL.name(name.split(".") + parts.toList())
++}
++
++object JsonQueryGenerator : BaseQueryGenerator() {
++
++    override fun forEachQueryRequestToSQL(request: QueryRequest): Select<*> {
++        return DSL
++            .with(buildVarsCTE(request))
++            .select(
++                DSL.jsonArrayAgg(
++                    buildJSONSelectionForQueryRequest(request)
++                )
++            )
++            .from(
++                DSL.table(DSL.name("vars"))
++            )
++    }
++
++    override fun queryRequestToSQL(request: QueryRequest): Select<*> {
++        return queryRequestToSQLInternal(request)
++    }
++
++    private fun queryRequestToSQLInternal(
++        request: QueryRequest,
++    ): SelectSelectStep<*> {
++        // JOOQ is smart enough to not generate CTEs if there are no native queries
++        return DSL.select(
++            DSL.jsonArrayAgg(
++                buildJSONSelectionForQueryRequest(request)
++            )
++        )
++    }
++
++    fun buildJSONSelectionForQueryRequest(
++        request: QueryRequest,
++        parentTable: String? = null,
++        parentRelationship: Relationship? = null,
++        // Unique alias for this subquery's table reference. When the relationship source and target are
++        // the same collection (self-join), passing a distinct alias prevents both sides of the JOIN
++        // condition from resolving to the same table, which would make PostgreSQL silently return no rows.
++        collectionAlias: String? = null
++    ): JSONObjectNullStep<*> {
++        val effectiveAlias = collectionAlias ?: request.collection
++
++        // When a unique alias is provided, alias the FROM table so that the outer table name remains
++        // visible in the correlated WHERE clause (e.g. FROM regions AS parentRegion_regions).
++        val baseTable = if (collectionAlias != null) {
++            collectionTable(request.collection).`as`(DSL.name(effectiveAlias))
++        } else {
++            collectionTable(request.collection)
++        }
++
++        val baseQuery = DSL.select(
++            (io.hasura.ndc.common.ConnectorConfiguration.Loader.config.tables
++                .firstOrNull { it.tableName == request.collection }?.columns?.map { it.name }
++                ?: io.hasura.ndc.common.ConnectorConfiguration.Loader.config.nativeQueries[request.collection]?.columns?.keys
++                ?: throw jakarta.ws.rs.BadRequestException("Unknown collection"))
++                .map { DSL.field(DSL.name(effectiveAlias, it)) }
++        ).select(
++            getSelectOrderFields(request, effectiveAlias)
++        ).from(
++            baseTable
++        )
++
++        addJoinsRequiredForOrderByFields2(baseQuery, request, effectiveAlias)
++
++        if (parentRelationship != null && parentTable != null) {
++            baseQuery.where(
++                mkJoinWhereClause(parentTable, parentRelationship, effectiveAlias)
++            )
++        }
++
++        if (request.query.predicate != null) {
++            // Use the SQL-alias-aware variant so that empty-path column references in the
++            // predicate are qualified with `effectiveAlias` (matching the FROM clause), while
++            // connector-config lookups (e.g. column types) still use the real collection name
++            // stored in `request.collection`. Without this split, an aliased self-join's WHERE
++            // clause would attempt a config lookup keyed by the alias and fail with
++            // "Collection <alias> not found in connector configuration".
++            baseQuery.where(
++                expressionToConditionWithSqlAlias(request.query.predicate!!, request, effectiveAlias)
++            )
++
++            val requiredJoinTables = collectRequiredJoinTablesForWhereClause(
++                rootTable = effectiveAlias,
++                where = request.query.predicate!!,
++                collectionRelationships = request.collection_relationships
++            )
++
++            requiredJoinTables.forEach { relationshipInfo ->
++                val relationship = request.collection_relationships[relationshipInfo.relationshipName]
++                    ?: error("Relationship ${relationshipInfo.relationshipName} not found")
++
++                baseQuery.leftJoin(
++                    collectionTable(relationship.target_collection)
++                ).on(
++                    mkSQLJoin2(
++                        rel = relationship,
++                        sourceCollection = relationshipInfo.fromTable,
++                        targetTableNameTransform = { relationshipInfo.toTable }
++                    )
++                )
++            }
++
++            // If requiredJoinTables is non-empty, we must add the primary key of the parent table to GROUP BY
++            // to prevent duplicate rows
++            if (requiredJoinTables.isNotEmpty()) {
++                baseQuery.groupBy(
++                    getSelectOrderFields(request, effectiveAlias)
++                )
++            }
++
++        }
++        if (request.query.order_by != null) {
++            baseQuery.orderBy(
++                translateIROrderByField(
++                    orderBy = request.query.order_by,
++                    currentCollection = effectiveAlias,
++                    relationships = request.collection_relationships
++                )
++            )
++        }
++        if (request.query.limit != null) {
++            baseQuery.limit(request.query.limit)
++        }
++        if (request.query.offset != null) {
++            baseQuery.offset(request.query.offset)
++        }
++
++        val baseSelection = baseQuery.asTable(DSL.name(tojOOQName(effectiveAlias)))
++
++        return DSL.jsonObject(
++            buildList {
++                if (!request.query.fields.isNullOrEmpty()) {
++                    add(
++                        DSL.jsonEntry(
++                            "rows",
++                            DSL.select(
++                                DSL.nvl(
++                                    DSL.jsonArrayAgg(
++                                        DSL.jsonObject(
++                                            (request.query.fields ?: emptyMap()).map { (alias, field) ->
++                                                when (field) {
++                                                    is ColumnField -> {
++                                                        val columnField = DSL.field(DSL.name(field.column))
++                                                        val (columnType, ndcScalar) = columnTypeTojOOQType(
++                                                            PostgreSQLJDBCSchemaGenerator::mapScalarType,
++                                                            request.collection,
++                                                            field
++                                                        )
++                                                        val castedField = castToSQLDataType(
++                                                            DatabaseType.POSTGRESQL,
++                                                            columnField,
++                                                            ndcScalar
++                                                        )
++                                                        DSL.jsonEntry(
++                                                            alias,
++                                                            castedField
++                                                        )
++                                                    }
++
++                                                    is IRField.RelationshipField -> {
++                                                        val relationship =
++                                                            request.collection_relationships[field.relationship]
++                                                                ?: error("Relationship ${field.relationship} not found")
++
++                                                        // Derive a unique inner alias from the field alias and target
++                                                        // collection. This ensures the inner subquery is never aliased
++                                                        // the same as the outer table, which would make both sides of a
++                                                        // self-join WHERE condition resolve to the same scope.
++                                                        val innerAlias = "${alias}_${relationship.target_collection}"
++                                                            .replace(".", "_")
++
++                                                        val subQuery = buildJSONSelectionForQueryRequest(
++                                                            parentTable = effectiveAlias,
++                                                            parentRelationship = relationship,
++                                                            collectionAlias = innerAlias,
++                                                            request = QueryRequest(
++                                                                collection = relationship.target_collection,
++                                                                collection_relationships = request.collection_relationships,
++                                                                query = field.query,
++                                                                arguments = field.arguments,
++                                                                variables = null
++                                                            )
++                                                        )
++
++                                                        DSL.jsonEntry(
++                                                            alias,
++                                                            DSL.coalesce(
++                                                                DSL.select(subQuery),
++                                                                DSL.jsonObject(
++                                                                    DSL.jsonEntry(
++                                                                        "rows",
++                                                                        DSL.jsonArray()
++                                                                    )
++                                                                )
++                                                            )
++                                                        )
++                                                    }
++                                                }
++                                            }
++                                        )
++                                    ).orderBy(
++                                        getConcatOrderFields(request, effectiveAlias)
++                                    ),
++                                    DSL.jsonArray()
++                                )
++                            ).from(
++                                baseSelection
++                            )
++                        )
++                    )
++                }
++                if (!request.query.aggregates.isNullOrEmpty()) {
++                    add(
++                        DSL.jsonEntry(
++                            "aggregates",
++                            DSL.select(
++                                DSL.nvl(
++                                    DSL.jsonObject(
++                                        (request.query.aggregates ?: emptyMap()).map { (alias, aggregate) ->
++                                            DSL.jsonEntry(
++                                                alias,
++                                                getAggregatejOOQFunction(aggregate)
++                                            )
++                                        }
++                                    ),
++                                    DSL.jsonObject()
++                                )
++                            ).from(
++                                baseSelection
++                            )
++                        )
++                    )
++                }
++            }
++        )
++    }
++
++    data class RelationshipInfo(
++        val fromTable: String,
++        val toTable: String,
++        val relationshipName: String,
++    )
++
++    // Collect the required relationships from "column.path" and "value.path"
++    private fun collectRequiredJoinTablesForWhereClause(
++        rootTable: String,
++        where: Expression,
++        collectionRelationships: Map<String, Relationship>
++    ): Set<RelationshipInfo> {
++        val requiredRelationships = mutableSetOf<RelationshipInfo>()
++        var currentTable = rootTable
++
++        fun collectFromExpression(expression: Expression) {
++            fun collectFromPath(path: List<PathElement>) {
++                path.forEach { pathElement ->
++                    val relationshipName = pathElement.relationship
++                    val relationship = collectionRelationships[relationshipName]
++                        ?: error("Relationship $relationshipName not found")
++
++                    if (currentTable != relationship.target_collection) {
++                        requiredRelationships.add(
++                            RelationshipInfo(
++                                fromTable = currentTable,
++                                toTable = relationship.target_collection,
++                                relationshipName = relationshipName
++                            )
++                        )
++                    }
++                    currentTable = relationship.target_collection
++
++                    // Recursively collect from the predicate of the path element
++                    collectFromExpression(pathElement.predicate)
++                }
++            }
++
++            when (expression) {
++                is Expression.ApplyBinaryComparison -> {
++                    if (expression.column is ComparisonTarget.Column) {
++                        val columnPath = (expression.column as ComparisonTarget.Column).path
++                        collectFromPath(columnPath)
++                    }
++                    if (expression.value is ComparisonValue.ColumnComp) {
++                        val value = (expression.value as ComparisonValue.ColumnComp)
++                        if (value.column is ComparisonTarget.Column) {
++                            val columnPath = (value.column as ComparisonTarget.Column).path
++                            collectFromPath(columnPath)
++                        }
++                    }
++                }
++
++                is Expression.And -> expression.expressions.forEach { collectFromExpression(it) }
++                is Expression.Or -> expression.expressions.forEach { collectFromExpression(it) }
++                is Expression.Not -> collectFromExpression(expression.expression)
++                else -> {}
++            }
++        }
++
++        collectFromExpression(where)
++        return requiredRelationships.distinctBy { it.relationshipName }.toSet()
++    }
++
++    private fun getAggregatejOOQFunction(aggregate: Aggregate) = when (aggregate) {
++        is Aggregate.StarCount -> DSL.count()
++        is Aggregate.SingleColumn -> {
++            val col = DSL.field(DSL.name(aggregate.column)) as Field<Number>
++            when (aggregate.function) {
++                SingleColumnAggregateFunction.AVG -> DSL.avg(col)
++                SingleColumnAggregateFunction.MAX -> DSL.max(col)
++                SingleColumnAggregateFunction.MIN -> DSL.min(col)
++                SingleColumnAggregateFunction.COUNT -> DSL.count(col)
++                SingleColumnAggregateFunction.SUM -> DSL.sum(col)
++                SingleColumnAggregateFunction.STDDEV_POP -> DSL.stddevPop(col)
++                SingleColumnAggregateFunction.STDDEV_SAMP -> DSL.stddevSamp(col)
++                SingleColumnAggregateFunction.VAR_POP -> DSL.varPop(col)
++                SingleColumnAggregateFunction.VAR_SAMP -> DSL.varSamp(col)
++            }
++        }
++
++        is Aggregate.ColumnCount -> {
++            val col = DSL.field(DSL.name(aggregate.column))
++            if (aggregate.distinct) DSL.countDistinct(col) else DSL.count(col)
++        }
++    }
++
++    private fun mkJoinWhereClause(
++        sourceTable: String,
++        parentRelationship: Relationship,
++        // Alias used for the inner (target) table. Defaults to the target collection name,
++        // which preserves existing behaviour for cross-table relationships. For self-joins this
++        // must differ from sourceTable so that both sides of the condition are unambiguous.
++        innerAlias: String = parentRelationship.target_collection
++    ) = DSL.and(
++        parentRelationship.column_mapping.map { (from, to) ->
++            val childField = DSL.field(tojOOQName(sourceTable, from))
++            val parentField = DSL.field(tojOOQName(innerAlias, to))
++            childField.eq(parentField)
++        }
++    )
++
++
++    private const val ORDER_FIELD_SUFFIX = "_order_field"
++
++    private fun getSelectOrderFields(
++        request: QueryRequest,
++        currentCollection: String = request.collection
++    ): List<Field<*>> {
++        val sortFields = translateIROrderByField(
++            orderBy = request.query.order_by,
++            currentCollection = currentCollection,
++            relationships = request.collection_relationships
++        )
++        return sortFields.map {
++            // Use the qualified name (which includes the table name) to ensure uniqueness
++            val field = it.`$field`()
++            val qualifiedName = field.qualifiedName.toString().replace("\"", "")
++            field.`as`(qualifiedName + ORDER_FIELD_SUFFIX)
++        }
++    }
++
++    private fun getConcatOrderFields(
++        request: QueryRequest,
++        currentCollection: String = request.collection
++    ): List<SortField<*>> {
++        val sortFields = translateIROrderByField(
++            orderBy = request.query.order_by,
++            currentCollection = currentCollection,
++            relationships = request.collection_relationships
++        )
++        return sortFields.map {
++            // Use the qualified name (which includes the table name) to ensure uniqueness
++            val field = it.`$field`()
++            val qualifiedName = field.qualifiedName.toString().replace("\"", "")
++            val orderField = DSL.field(DSL.name(qualifiedName + ORDER_FIELD_SUFFIX))
++            when (it.order) {
++                SortOrder.ASC -> orderField.asc().nullsLast()
++                SortOrder.DESC -> orderField.desc().nullsFirst()
++                else -> orderField.asc().nullsLast()
++            }
++        }
++    }
++
++    fun addJoinsRequiredForOrderByFields2(
++        select: SelectJoinStep<*>,
++        request: QueryRequest,
++        sourceCollection: String = request.collection
++    ) {
++        val seenRelations = mutableSetOf<List<String>>()
++        request.query.order_by?.elements?.forEach { orderByElement ->
++            if (orderByElement.target.path.isNotEmpty()) {
++                var currentCollection = sourceCollection
++                var currentTableName = sourceCollection
++
++                // Process each relationship in path sequentially
++                orderByElement.target.path.forEachIndexed { index, pathElem ->
++                    val relationshipName = pathElem.relationship
++                    val relChain = listOf(currentCollection, relationshipName)
++
++                    if (!seenRelations.contains(relChain)) {
++                        seenRelations.add(relChain)
++
++                        val relationship = request.collection_relationships[relationshipName]
++                            ?: throw Exception("Relationship not found")
++
++                        val forwardJoinKeys = if (index + 1 < orderByElement.target.path.size) {
++                            val nextPathElem = orderByElement.target.path[index + 1]
++                            val nextRelationshipName = nextPathElem.relationship
++                            val nextRelationship = request.collection_relationships[nextRelationshipName]
++                                ?: throw Exception("Relationship '$nextRelationshipName' not found for next step")
++                            nextRelationship.column_mapping.keys.map { sourceColumnInNextMapping ->
++                                DSL.field(tojOOQName(sourceColumnInNextMapping))
++                            }
++                        } else {
++                            emptyList()
++                        }
++
++                        when (relationship.relationship_type) {
++                            RelationshipType.Object -> {
++                                select.leftJoin(
++                                    collectionTable(relationship.target_collection)
++                                ).on(
++                                    mkSQLJoin2(
++                                        rel = relationship,
++                                        sourceCollection = currentTableName,
++                                    )
++                                )
++                                // Update current table name for the next join
++                                currentTableName = relationship.target_collection
++                            }
++
++                            RelationshipType.Array -> {
++                                val aggregateTableAlias = "${relationshipName}_aggregate"
++                                val orderByWhereCondition = expressionToCondition(
++                                    pathElem.predicate,
++                                    request.copy(
++                                        collection = relationship.target_collection,
++                                    )
++                                )
++                                select.leftJoin(
++                                    mkAggregateSubquery2(
++                                        elem = orderByElement,
++                                        relationship = relationship,
++                                        whereCondition = orderByWhereCondition,
++                                        forwardJoinKeys = forwardJoinKeys,
++                                    ).asTable(
++                                        DSL.name(aggregateTableAlias)
++                                    )
++                                ).on(
++                                    mkSQLJoin2(
++                                        rel = relationship,
++                                        sourceCollection = currentTableName,
++                                        targetTableNameTransform = { aggregateTableAlias }
++                                    )
++                                )
++                                // Update current table name for the next join
++                                currentTableName = aggregateTableAlias
++                            }
++                        }
++
++                        // Add predicate condition for the path element only for object relationships; for aggregates it's handled inside the subquery
++                        if (pathElem.predicate != Expression.And(emptyList()) && relationship.relationship_type == RelationshipType.Object) {
++                            select.where(
++                                expressionToCondition(
++                                    pathElem.predicate,
++                                    request.copy(
++                                        collection = relationship.target_collection,
++                                    )
++                                )
++                            )
++                        }
++                    }
++
++                    val relationship = request.collection_relationships[relationshipName]
++                        ?: throw Exception("Relationship not found")
++
++                    currentCollection = relationship.target_collection
++                }
++            }
++        }
++    }
++
++    fun mkSQLJoin2(
++        rel: Relationship,
++        sourceCollection: String,
++        targetTableNameTransform: (String) -> String = { it },
++    ): Condition {
++        val targetTableFQN = targetTableNameTransform(rel.target_collection)
++        return DSL.and(
++            rel.column_mapping.map { (sourceColumn, targetColumn) ->
++                DSL.field(tojOOQName(sourceCollection, sourceColumn))
++                    .eq(DSL.field(tojOOQName(targetTableFQN, targetColumn)))
++            }
++                    + rel.arguments.map { (targetColumn, argument) ->
++                DSL.field(tojOOQName(sourceCollection, (argument as Argument.Column).name))
++                    .eq(DSL.field(tojOOQName(targetTableFQN, targetColumn)))
++            }
++        )
++    }
++
++
++    fun mkAggregateSubquery2(
++        elem: OrderByElement,
++        relationship: Relationship,
++        whereCondition: Condition,
++        forwardJoinKeys: List<Field<*>> = emptyList(),
++    ): SelectHavingStep<Record> {
++        // If the target is a star-count aggregate, we need to select the special aggregate_count field
++        // Otherwise, it's a regular aggregate, so our "SELECT *" will give us access to it in the other
++        // parts of the query
++        val orderElem = when (val target = elem.target) {
++            is OrderByTarget.OrderByStarCountAggregate -> {
++                listOf(DSL.count().`as`(DSL.name("aggregate_field")))
++            }
++
++            is OrderByTarget.OrderBySingleColumnAggregate -> {
++                val aggregate = Aggregate.SingleColumn(target.column, target.function)
++                listOf(translateIRAggregateField(aggregate).`as`(DSL.name("aggregate_field")))
++            }
++
++            else -> {
++                emptyList()
++            }
++        }
++
++        fun mkJoinKeyFields2(
++            rel: Relationship?,
++        ): List<Field<Any>> {
++            return if (rel == null)
++                emptyList()
++            else if (rel.column_mapping.isNotEmpty())
++                rel.column_mapping.values.map { DSL.field(tojOOQName(rel.target_collection, it)) }
++            else if (rel.arguments.isNotEmpty())
++                rel.arguments.keys.map { DSL.field(DSL.name(it)) }
++            else emptyList()
++        }
++
++        val joinCols = mkJoinKeyFields2(relationship) + forwardJoinKeys
++
++        // Select fields that need to be present in order for the ORDER BY clause to work
++        return DSL.select(
++            orderElem + joinCols
++        ).from(
++            collectionTable(relationship.target_collection)
++        ).where(
++            whereCondition
++        ).groupBy(
++            joinCols
++        )
++    }
++}
+--- /dev/null
++++ b/ndc-connector-postgresql/src/main/kotlin/io/hasura/postgresql/PostgreSQLDataConnectorService.kt
+@@ -0,0 +1,69 @@
++package io.hasura.postgresql
++
++import com.fasterxml.jackson.module.kotlin.readValue
++import io.hasura.ndc.app.interfaces.IDataSourceProvider
++import io.hasura.ndc.app.services.dataConnectors.BaseDataConnectorService
++import io.hasura.ndc.ir.*
++import io.hasura.ndc.sqlgen.MutationTranslator
++import io.opentelemetry.api.trace.Tracer
++import jakarta.annotation.Priority
++import jakarta.enterprise.inject.Alternative
++import jakarta.inject.Inject
++import jakarta.inject.Singleton
++import org.jooq.SQLDialect
++
++@Singleton
++@Alternative
++@Priority(1)
++class PostgreSQLDataConnectorService @Inject constructor(
++    tracer: Tracer,
++    datasourceProvider: IDataSourceProvider
++) : BaseDataConnectorService(
++    tracer,
++    PostgreSQLJDBCSchemaGenerator,
++    datasourceProvider
++) {
++
++    override val capabilitiesResponse = CapabilitiesResponse(
++        version = "0.1.6",
++        capabilities = Capabilities(
++            query = QueryCapabilities(
++                aggregates = mapOf(),
++                variables = mapOf()
++            ),
++            mutation = MutationCapabilities(),
++            relationships = RelationshipsCapabilities(
++                relation_comparisons = mapOf(),
++                order_by_aggregate = mapOf()
++            )
++        )
++    )
++
++    override fun handleQuery(request: QueryRequest): List<RowSet> {
++        val dslCtx = mkDSLCtx(request.request_arguments)
++
++        // Check whether the QueryRequest has predicates referencing variables, and if so, that variables are provided
++        // This case is checked in the test "select_where_with_no_variable_values"
++        val hasVariables = objectMapper.writeValueAsString(request).contains("\"type\":\"variable\"")
++        if (hasVariables && request.variables.isNullOrEmpty()) {
++            return emptyList()
++        }
++
++        val query = if (!request.variables.isNullOrEmpty()) {
++            JsonQueryGenerator.forEachQueryRequestToSQL(request)
++        } else {
++            JsonQueryGenerator.queryRequestToSQL(request)
++        }
++
++        val rows = executeDbQuery(query, dslCtx)
++        val json = rows.getValue(0, 0).toString()
++
++        val rowsets = objectMapper.readValue<List<RowSet>>(json)
++        return rowsets
++    }
++
++    override val jooqDialect = SQLDialect.POSTGRES
++    override val jooqSettings = commonDSLContextSettings
++    override val sqlGenerator = JsonQueryGenerator
++    override val mutationTranslator = MutationTranslator
++}
+--- /dev/null
++++ b/ndc-connector-postgresql/src/main/kotlin/io/hasura/postgresql/PostgreSQLJDBCSchemaGenerator.kt
+@@ -0,0 +1,304 @@
++package io.hasura.postgresql
++
++import io.hasura.ndc.app.services.JDBCSchemaGenerator
++import io.hasura.ndc.common.NDCScalar
++import io.hasura.ndc.ir.AggregateFunctionDefinition
++import io.hasura.ndc.ir.ComparisonOperatorDefinition
++import io.hasura.ndc.ir.ScalarRepresentation
++import io.hasura.ndc.ir.ScalarType
++import io.hasura.ndc.ir.Type
++
++object PostgreSQLJDBCSchemaGenerator : JDBCSchemaGenerator() {
++
++    override fun getScalars(): Map<String, ScalarType> {
++        return mapOf(
++            NDCScalar.BOOLEAN.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.BOOLEAN),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.STRING.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.STRING),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_contains" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.STRING.name)),
++                    "_like" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.STRING.name)),
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.STRING.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.STRING.name))
++                )
++            ),
++            NDCScalar.INT8.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.INT8),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT8.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT8.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT8.name))
++                )
++            ),
++            NDCScalar.INT16.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.INT16),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT16.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT16.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT16.name))
++                )
++            ),
++            NDCScalar.INT32.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.INT32),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT32.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT32.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT32.name))
++                )
++            ),
++            NDCScalar.INT64.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.INT64),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.INT64.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name))
++                )
++            ),
++            NDCScalar.FLOAT32.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.FLOAT32),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT32.name))
++                )
++            ),
++            NDCScalar.FLOAT64.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.FLOAT64),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name))
++                )
++            ),
++            NDCScalar.BIGINTEGER.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.BIGINTEGER),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGINTEGER.name))
++                )
++            ),
++            NDCScalar.BIGDECIMAL.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.BIGDECIMAL),
++                comparison_operators = mapOf(
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = mapOf(
++                    "avg" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.FLOAT64.name)),
++                    "sum" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    // "count" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.INT64.name)),
++                    "min" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name)),
++                    "max" to AggregateFunctionDefinition(result_type = Type.Named(NDCScalar.BIGDECIMAL.name))
++                )
++            ),
++            NDCScalar.UUID.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.UUID),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.DATE.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.DATE),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.DATE.name)),
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.TIMESTAMP.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.TIMESTAMP),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMP.name)),
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.TIMESTAMPTZ.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.TIMESTAMPTZ),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                    "_gt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
++                    "_lt" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
++                    "_gte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
++                    "_lte" to ComparisonOperatorDefinition.Custom(argument_type = Type.Named(NDCScalar.TIMESTAMPTZ.name)),
++                    "_in" to ComparisonOperatorDefinition.In
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.GEOGRAPHY.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.GEOGRAPHY),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.GEOMETRY.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.GEOMETRY),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.BYTES.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.BYTES),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal
++                ),
++                aggregate_functions = emptyMap()
++            ),
++            NDCScalar.JSON.name to ScalarType(
++                representation = ScalarRepresentation(NDCScalar.JSON),
++                comparison_operators = mapOf(
++                    "_eq" to ComparisonOperatorDefinition.Equal,
++                ),
++                aggregate_functions = emptyMap()
++            )
++        )
++    }
++
++    // TODO: Proper types for PostgreSQL rather then strings
++    override fun mapScalarType(columnTypeStr: String, numericPrecision: Int?, numericScale: Int?): NDCScalar {
++        return when {
++            columnTypeStr.uppercase().startsWith("BIT") -> {
++                when (numericPrecision) {
++                    1 -> NDCScalar.BOOLEAN
++                    else -> NDCScalar.BYTES
++                }
++            }
++            else -> when (columnTypeStr.uppercase()) {
++                // Integer Types
++                "TINYINT" -> NDCScalar.INT8
++                "SMALLINT" -> NDCScalar.INT16
++                "SMALLINT UNSIGNED" -> NDCScalar.INT32
++                "MEDIUMINT" -> NDCScalar.INT32
++                "INT", "INTEGER" -> NDCScalar.INT32
++                "BIGINT" -> NDCScalar.INT64
++    
++                // Floating-Point Types
++                "FLOAT" -> NDCScalar.FLOAT32
++                "DOUBLE" -> NDCScalar.FLOAT64
++    
++                // Numeric and Decimal Types
++                "DECIMAL", "NUMERIC" -> {
++                    if (numericScale == 0) {
++                        NDCScalar.BIGINTEGER // Integer-like numeric without scale
++                    } else {
++                        NDCScalar.BIGDECIMAL // Numeric with scale
++                    }
++                }
++    
++                // Date and Time Types
++                "DATE" -> NDCScalar.DATE
++                "TIMESTAMP" -> NDCScalar.TIMESTAMP
++                "TIME" -> NDCScalar.TIMESTAMP
++                "TIMESTAMPTZ" -> NDCScalar.TIMESTAMPTZ
++    
++                // String Types
++                "CHAR", "VARCHAR", "TEXT", "TINYTEXT", "MEDIUMTEXT", "LONGTEXT" -> NDCScalar.STRING
++    
++                // Binary Types
++                "BLOB", "TINYBLOB", "MEDIUMBLOB", "LONGBLOB" -> NDCScalar.BYTES
++    
++                // JSON Type
++                "JSON", "JSONB" -> NDCScalar.JSON
++    
++                // Default Fallback
++                else -> NDCScalar.JSON
++            }
++        }
++    }
++}
+--- /dev/null
++++ b/ndc-connector-postgresql/src/main/resources/application.properties
+@@ -0,0 +1,2 @@
++datasource.name=postgresql
++quarkus.otel.service.name=${OTEL_SERVICE_NAME:ndc-postgresql}
+\ No newline at end of file
+--- a/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseGenerator.kt
++++ b/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseGenerator.kt
+@@ -9,6 +9,21 @@
+ import org.jooq.Field
+ 
+ sealed interface BaseGenerator {
++
++    // Configured static native queries are derived tables, including in relationship predicates.
++    // The same table resolution is used for projections, filters, and ordering.
++    fun collectionTable(collection: String): org.jooq.Table<*> {
++        val native = ConnectorConfiguration.Loader.config.nativeQueries[collection]
++            ?: return DSL.table(DSL.name(collection.split(".")))
++        require(native.arguments.isEmpty()) { "Only static native queries are published" }
++        val parts = native.sql.getParts(ConnectorConfiguration.Loader.CONFIG_DIRECTORY)
++        require(parts.all { it is io.hasura.ndc.common.NativeQueryPart.Text }) {
++            "Native query parameters are not supported"
++        }
++        return DSL.table("({0})", DSL.sql(parts.joinToString("") { it.value }))
++            .`as`(DSL.name(collection))
++    }
++
+ 
+     fun mkSQLJoin(
+         rel: Relationship,
+@@ -174,7 +189,7 @@
+     // Convert a WHERE-like expression IR into a JOOQ Condition, with an explicit SQL table alias
+     // used for qualifying empty-path column references. The `request.collection` value is still
+     // used for connector-config lookups (e.g. column types in getColumnType). This separation
+-    // allows callers (notably the MySQL JSONGenerator) to alias a self-referential subquery's
++    // allows callers (notably the PostgreSQL JSONGenerator) to alias a self-referential subquery's
+     // FROM table without breaking config lookup, which expects the real collection name.
+     fun expressionToConditionWithSqlAlias(
+         e: Expression,
+@@ -268,7 +283,7 @@
+                             DSL
+                                 .selectOne()
+                                 .from(
+-                                    DSL.table(DSL.name(splitCollectionName(rel.target_collection)))
++                                    collectionTable(rel.target_collection)
+                                 )
+                                 .where(
+                                     DSL.and(
+@@ -308,7 +323,7 @@
+                             DSL
+                                 .selectOne()
+                                 .from(
+-                                    DSL.table(DSL.name(splitCollectionName(inTable.collection)))
++                                    collectionTable(inTable.collection)
+                                 )
+                                 .where(
+                                     listOf(
+--- a/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseQueryGenerator.kt
++++ b/ndc-sqlgen/src/main/kotlin/io/hasura/ndc/sqlgen/BaseQueryGenerator.kt
+@@ -20,7 +20,7 @@
+  */
+ enum class DatabaseType {
+     ORACLE,
+-    MYSQL,
++    POSTGRESQL,
+     SNOWFLAKE,
+     TRINO
+ }
+@@ -255,7 +255,7 @@
+         return DSL.select(
+             orderElem + joinCols
+         ).from(
+-            DSL.table(DSL.name(relationship.target_collection))
++            collectionTable(relationship.target_collection)
+         ).where(
+             whereCondition
+         ).groupBy(
+@@ -341,7 +341,7 @@
+                     val relChain = listOf(currentTableName, pathElem.relationship)
+                     if (!seenRelationChains.contains(relChain)) {
+                         select.leftJoin(
+-                            DSL.table(DSL.name(rel.target_collection))
++                            collectionTable(rel.target_collection)
+                         ).on(
+                             mkSQLJoin(rel, currentTableName)
+                         )
+@@ -416,7 +416,7 @@
+ 
+         var selectStep: SelectJoinStep<Record> = DSL
+             .select(orderElem + groupCols)
+-            .from(DSL.table(DSL.name(lastRel.target_collection)))
++            .from(collectionTable(lastRel.target_collection))
+ 
+         val whereConditions = mutableListOf<Condition>()
+ 
+@@ -427,7 +427,7 @@
+             val prevRel = relationships[prevRelName] ?: error("Relationship $prevRelName not found")
+ 
+             selectStep = selectStep
+-                .join(DSL.table(DSL.name(prevRel.target_collection)))
++                .join(collectionTable(prevRel.target_collection))
+                 .on(
+                     mkSQLJoin(
+                         currRel,
+@@ -522,7 +522,7 @@
+                                 when (relationship.relationship_type) {
+                                     RelationshipType.Object -> {
+                                         select.leftJoin(
+-                                            DSL.table(DSL.name(relationship.target_collection))
++                                            collectionTable(relationship.target_collection)
+                                         ).on(
+                                             mkSQLJoin(
+                                                 relationship,
+@@ -533,7 +533,7 @@
+                                     }
+                                     RelationshipType.Array -> {
+                                         select.leftJoin(
+-                                            DSL.table(DSL.name(relationship.target_collection))
++                                            collectionTable(relationship.target_collection)
+                                         ).on(
+                                             mkSQLJoin(
+                                                 relationship,
+@@ -785,7 +785,7 @@
+                 field.cast(SQLDataType.VARCHAR)
+             NDCScalar.GEOMETRY, NDCScalar.GEOGRAPHY ->
+                 when(databaseType) {
+-                    DatabaseType.MYSQL -> DSL.cast(field, SQLDataType.JSON)
++                    DatabaseType.POSTGRESQL -> DSL.cast(field, SQLDataType.JSON)
+                     DatabaseType.SNOWFLAKE -> DSL.cast(DSL.field("ST_AsGeoJSON({0})", Any::class.java, field), SQLDataType.JSON)
+                     else -> field
+                 }
+--- a/ndc-sqlgen/src/test/kotlin/io/hasura/ndc/sqlgen/BaseGeneratorAliasTest.kt
++++ b/ndc-sqlgen/src/test/kotlin/io/hasura/ndc/sqlgen/BaseGeneratorAliasTest.kt
+@@ -13,7 +13,7 @@
+  * Verifies that `expressionToConditionWithSqlAlias` decouples SQL table aliasing from
+  * connector-config collection lookup.
+  *
+- * Regression coverage for the v1.0.19 MySQL bug where a self-referential subquery's WHERE
++ * Regression coverage for the v1.0.19 PostgreSQL bug where a self-referential subquery's WHERE
+  * predicate was looking up `<alias>_<collection>` in connector configuration and erroring with
+  * "Collection products_products not found in connector configuration".
+  *
+@@ -31,7 +31,7 @@
+     }
+ 
+     private fun renderInline(condition: org.jooq.Condition): String =
+-        DSL.using(SQLDialect.MYSQL).renderInlined(condition)
++        DSL.using(SQLDialect.POSTGRES).renderInlined(condition)
+ 
+     /**
+      * Empty-path predicate inside an aliased subquery: the SQL must qualify columns with the
+--- a/settings.gradle.kts
++++ b/settings.gradle.kts
+@@ -1,4 +1,5 @@
+ pluginManagement {
++    repositories { mavenCentral(); gradlePluginPortal() }
+     val quarkusPluginVersion: String by settings
+     val quarkusPluginId: String by settings
+ 
+@@ -15,7 +16,4 @@
+ include(":ndc-sqlgen")
+ include(":ndc-app")
+ include(":ndc-cli")
+-include(":ndc-connector-oracle")
+-include(":ndc-connector-mysql")
+-include(":ndc-connector-snowflake")
+-include(":ndc-connector-trino")
+\ No newline at end of file
++include(":ndc-connector-postgresql")

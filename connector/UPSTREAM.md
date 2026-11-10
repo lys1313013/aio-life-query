@@ -1,6 +1,6 @@
 # Connector 来源与修改范围
 
-文档核对日期：2026-10-18。按本仓库固定构建脚本、补丁、关系 SQL 与元数据生成器核对；不表示重新核验了上游最新版本或许可。
+文档核对日期：2026-11-10。按本仓库固定构建脚本、补丁、关系 SQL 与元数据生成器核对；不表示重新核验了上游最新版本或许可。
 
 仓库：[hasura/ndc-jvm-mono](https://github.com/hasura/ndc-jvm-mono)。
 
@@ -9,9 +9,9 @@
 - 构建环境：Gradle 8.14.3 / JDK 21；运行协议 NDC 0.1.6。
 - 本仓库保存补丁与构建入口，源码及构建产物进入忽略的 `.cache/`。
 
-补丁只保留 MySQL 构建，使用 jOOQ OSS 3.19.8。禁用 mutation、explain 和请求级连接串；SQL 查询超时 5 秒；不自动生成多语句 SET；仅投影配置中的列；修正 SMALLINT UNSIGNED 的结构映射。Connector 缺少服务密钥时拒绝访问，去掉请求正文日志，错误输出仅保留错误类别，避免 SQL 和数据进入日志。
+补丁从原 MySQL 模块派生 PostgreSQL 构建，使用 jOOQ OSS 3.19.8。禁用 mutation、explain 和请求级连接串；SQL 查询超时 5 秒；不自动生成多语句 SET；仅投影配置中的列；适配 PostgreSQL 数值、时间和 JSONB 映射。Connector 缺少服务密钥时拒绝访问，去掉请求正文日志，错误输出仅保留错误类别，避免 SQL 和数据进入日志。
 
-`group_concat_max_len` 与 `max_execution_time` 通过连接配置初始化，保持 `allowMultiQueries=false`。OpenTelemetry 通过 `QUARKUS_OTEL_SDK_DISABLED=true` 在运行时关闭，见 [Quarkus 3.20 官方配置说明](https://quarkus.io/version/3.20/guides/opentelemetry/)。
+`statement_timeout=5000` 和 `default_transaction_read_only=on` 通过 PostgreSQL 连接 options 初始化；使用专门的列级 SELECT 角色。OpenTelemetry 通过 `QUARKUS_OTEL_SDK_DISABLED=true` 在运行时关闭，见 [Quarkus 3.20 官方配置说明](https://quarkus.io/version/3.20/guides/opentelemetry/)。
 
 分类关系扩展：仅允许受控配置中无参数的静态原生查询，将其内联为派生表，覆盖关系取数、过滤和排序的表引用；不接受客户端 SQL。原生查询统一通过派生表引用。投影同时按静态查询显式列白名单校验。`time-record-category.sql` 合并公共分类与当前用户的名称覆盖，派生集合没有独立公开查询入口。
 
@@ -23,7 +23,7 @@
 
 在本仓库根目录执行 `bash scripts/build_connector.sh`，输出为 `.cache/connector/quarkus-app/`。脚本校验归档 SHA-256，并记录补丁 SHA-256；已有源码缓存与当前补丁不一致时直接失败，需先移走 `.cache/connector-source` 再重建。构建使用 `-x test`，成功只表示打包完成。
 
-准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → MySQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。MySQL 版本要求见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
+准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → PostgreSQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。PostgreSQL 版本要求见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
 
 ## 授权与引擎边界
 

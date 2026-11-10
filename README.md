@@ -1,6 +1,6 @@
 # AIO Life Query
 
-AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 MySQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频、演出记录及月收入汇总；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
+AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 PostgreSQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频、演出记录及月收入汇总；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
 
 本仓库与 [aio-life-server](https://github.com/lys1313013/aio-life-server) 独立维护。用户身份和业务权限由配套后端校验，业务数据由 Connector 使用只读账号读取。
 
@@ -15,7 +15,7 @@ AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Has
 
 以下命令均在本仓库根目录执行。网关开发需要 JDK 21、Maven；元数据生成需要 Python 3；容器部署和隔离端到端验证需要 Docker Compose。Connector 构建使用 JDK 21 / Gradle 8.14.3，默认使用固定上游的 Gradle Wrapper。
 
-完整查询链依赖可用的 AIO Life 后端、专用 Redis、Hasura 和 MySQL Connector。单独启动 Java 网关不会启动这些依赖，也不会初始化业务数据库。
+完整查询链依赖可用的 AIO Life 后端、专用 Redis、Hasura 和 PostgreSQL Connector。单独启动 Java 网关不会启动这些依赖，也不会初始化业务数据库。
 
 ### 运行环境变量
 
@@ -31,11 +31,11 @@ AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Has
 | `AIO_QUERY_AUDIT_DIRECTORY` | 本机 `./artifacts/audit`；镜像 `/app/audit`，运行用户必须可写 |
 | `AIO_QUERY_MCP_ALLOWED_ORIGINS` | 空；需要浏览器 MCP 接入时填写逗号分隔的精确可信 Origin |
 | `AIO_QUERY_CONNECTOR_KEY` | 元数据生成和 Connector 部署必填，至少 32 字符，使用独立密钥 |
-| `AIO_QUERY_CONNECTOR_URL` / `AIO_QUERY_AUTH_WEBHOOK_URL` | 元数据生成默认 `http://mysql-connector:8080` / `http://gateway:45680/internal/hasura/auth` |
+| `AIO_QUERY_CONNECTOR_URL` / `AIO_QUERY_AUTH_WEBHOOK_URL` | 元数据生成默认 `http://postgresql-connector:8080` / `http://gateway:45680/internal/hasura/auth` |
 | `AIO_QUERY_JDBC_URL` | Compose 必填，含只读账号的 JDBC URL，由 Connector 使用 |
 | `AIO_QUERY_CONFIG_GID` | Compose 必填，容器读取生成元数据所需的附加组 ID |
 | `AIO_QUERY_ENGINE_IMAGE` | Compose 必填，经过目标环境验证的引擎镜像，部署时使用不可变 digest |
-| `AIO_QUERY_GATEWAY_IMAGE` / `AIO_QUERY_CONNECTOR_IMAGE` | Compose 默认 `aio-life-query:local` / `aio-life-query-mysql-connector:local` |
+| `AIO_QUERY_GATEWAY_IMAGE` / `AIO_QUERY_CONNECTOR_IMAGE` | Compose 默认 `aio-life-query:local` / `aio-life-query-postgresql-connector:local` |
 
 配置默认值见 [application.yml](src/main/resources/application.yml)，Compose 注入项见 [deploy/compose.yml](deploy/compose.yml)。本机直接运行 Maven 不自动加载 `.env`；通过终端或 IDE 注入环境变量。配置文件、JDBC 凭据、Token 和生成的密钥文件均不得提交。
 
@@ -63,7 +63,7 @@ mvn spring-boot:run
    ```
 
    使用已准备的网关、Connector 发布镜像时，设置对应镜像变量，按[镜像部署说明](docs/Docker与GitHubActions.md)拉取后执行 `docker compose -f deploy/compose.yml up -d --no-build`。Hasura 镜像需另行准备，Compose 不自动构建引擎。
-4. 通过 HTTPS 代理仅发布 `/api/v1/`、`/graphql` 和 `/mcp`。Compose 只将网关 `45680` 绑定到宿主回环地址，Hasura、Connector、Redis 不发布宿主端口；后端内部授权接口仅允许网关网络访问。跨主机内部通信和生产 MySQL 连接需配置 TLS。
+4. 通过 HTTPS 代理仅发布 `/api/v1/`、`/graphql` 和 `/mcp`。Compose 只将网关 `45680` 绑定到宿主回环地址，Hasura、Connector、Redis 不发布宿主端口；后端内部授权接口仅允许网关网络访问。跨主机内部通信和生产 PostgreSQL 连接需配置 TLS。
 
 元数据输出到 `.cache/hasura/`，包含内部密钥，目录权限为 `0750`、文件为 `0640`。附加组应只包含可信部署账号；生成器逐文件原子替换，失败后应完整重跑再重启服务。字段、关系、版本或密钥变化时，必须重新生成并部署相互匹配的网关、元数据和 Connector 配置。
 
@@ -77,7 +77,7 @@ sequenceDiagram
     participant Q as Query 网关
     participant A as AIO Life 后端
     participant H as Hasura
-    participant D as Connector / MySQL
+    participant D as Connector / PostgreSQL
     C->>Q: 查询 + Bearer Token / API Key
     Q->>A: 服务密钥 + 原 Bearer，检查用户和数据集权限
     A-->>Q: 可信 userId、角色与有效期
@@ -94,7 +94,7 @@ sequenceDiagram
 - REST、GraphQL 和 MCP 的身份仅来自 `Authorization: Bearer ...`。用户使用现有登录 Token 或 API Key，不能通过参数、角色或 `X-Hasura-*` 请求头指定身份。
 - 网关实时调用 `POST /api/internal/query/access/check-token`，不解析 JWT、不缓存认证结果、不共享后端 Redis。后端同时检查 `/mcp/tools` 及数据集对应业务的二级锁；无权限的数据集不出现在目录中，直接描述或执行也会拒绝。
 - 执行票据存入专用 Redis，绑定用户、数据集和发布版本，有效期最多 30 秒且不超过原凭据有效期，原子消费一次。Webhook 和返回结果前不再远程鉴权；退出、撤销凭据或重新锁定阻止后续请求，已经获准的在途查询可以完成。
-- 明细和汇总都受 `user_id = 当前用户 AND is_deleted = 0` 约束。查询中的 `userId`、`isDeleted` 只是与行权限取交集的筛选条件。MySQL 账号仅允许白名单列 SELECT，Connector 禁用 mutation、explain 和请求级连接地址覆盖。
+- 明细和汇总都受 `user_id = 当前用户 AND is_deleted = 0` 约束。查询中的 `userId`、`isDeleted` 只是与行权限取交集的筛选条件。PostgreSQL 账号仅允许白名单列 SELECT，Connector 禁用 mutation、explain 和请求级连接地址覆盖。
 - 没有结果缓存；依赖、结果校验或审计失败时拒绝返回成功，不返回 Hasura 部分数据。内部接口和基础设施不能作为公网查询入口。
 
 ## 对外接口
@@ -193,7 +193,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 排序项 | 最多 3 项，每项 1 个字段；关系字段不支持排序 |
 | 并发 / 频率 | 每用户 2、全局 10 / 每用户每分钟 30 次 |
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
-| JDBC / MySQL 执行时限 | 5 秒 / `max_execution_time=5000` |
+| JDBC / PostgreSQL 执行时限 | 5 秒 / `statement_timeout=5000` |
 
 所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startTime/endTime` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
@@ -205,9 +205,9 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 分类名称按当前用户覆盖后的有效名称匹配，同名分类均可匹配；公共分类保留公共 ID。停用分类保留历史元数据，删除、缺失或其他用户私有分类返回 `category: null`。关系来自 [relationships.json](src/main/resources/relationships.json) 和[固定派生 SQL](connector/time-record-category.sql)，无需创建数据库视图，没有独立公开根查询。
 
-目标自定义查询的三个配置示例为 [俯卧撑](examples/goal-pushups.json)、[零点在睡觉](examples/goal-sleep.json)、[最高单月工资](examples/goal-salary.json)。这些是业务目标请求，使用 `progressQuery` 等字段，不能直接发到 `/graphql`；预览与刷新通过业务后端完成。完整契约见[共同文档](https://github.com/lys1313013/aio-life/blob/main/docs/目标自定义查询进度.md)。运行 `python3 scripts/test_goal_progress.py` 可对隔离 MySQL / Hasura / Connector 及业务目标保存刷新进行联合验收；使用本地授权桩，不代表生产鉴权验收。
+目标自定义查询的三个配置示例为 [俯卧撑](examples/goal-pushups.json)、[零点在睡觉](examples/goal-sleep.json)、[最高单月工资](examples/goal-salary.json)。这些是业务目标请求，使用 `progressQuery` 等字段，不能直接发到 `/graphql`；预览与刷新通过业务后端完成。完整契约见[共同文档](https://github.com/lys1313013/aio-life/blob/main/docs/目标自定义查询进度.md)。运行 `python3 scripts/test_goal_progress.py` 可对隔离 PostgreSQL / Hasura / Connector 及业务目标保存刷新进行联合验收；使用本地授权桩，不代表生产鉴权验收。
 
-分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。MySQL 仅支持 8.x（最低 8.0.16）。此脚本使用本地授权桩，不能代替真实后端授权验收。
+分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。PostgreSQL 仅支持 18+。此脚本使用本地授权桩，不能代替真实后端授权验收。
 
 ## 构建与本地验证
 
@@ -229,9 +229,9 @@ bash scripts/test_e2e.sh
 
 单独覆盖全部网关测试并打包时，准备 `127.0.0.1` 上的隔离无密码 Redis，执行 `AIO_QUERY_TEST_REDIS_PORT=<port> mvn -B -ntp verify -DfailIfNoTests=true`，不要指向业务 Redis。`AIO_QUERY_JAVA_HOME` / `JAVA_HOME` 可指定 JDK 21；`AIO_QUERY_GRADLE` 可指定 Gradle 8.14.3，不使用 Gradle 9。
 
-完整端到端脚本需要相邻的 `aio-life-server`，可用 `AIO_LIFE_SOURCE` 指定路径。它创建临时 MySQL / Redis / Hasura，使用虚构数据和测试密钥，退出时清理自己的容器与 Connector 进程。默认占用 `45680/45682/45683`，可通过 `AIO_QUERY_TEST_GATEWAY_PORT`、`AIO_QUERY_TEST_HASURA_PORT`、`AIO_QUERY_TEST_CONNECTOR_PORT` 调整。报告位于两仓库的 `target/surefire-reports/`，日志位于 `.cache/e2e/` 和后端 `target/query-e2e/`。
+完整端到端脚本需要相邻的 `aio-life-server`，可用 `AIO_LIFE_SOURCE` 指定路径。它创建临时 PostgreSQL / Redis / Hasura，使用虚构数据和测试密钥，退出时清理自己的容器与 Connector 进程。默认占用 `45680/45682/45683`，可通过 `AIO_QUERY_TEST_GATEWAY_PORT`、`AIO_QUERY_TEST_HASURA_PORT`、`AIO_QUERY_TEST_CONNECTOR_PORT` 调整。报告位于两仓库的 `target/surefire-reports/`，日志位于 `.cache/e2e/` 和后端 `target/query-e2e/`。
 
-[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行网关、Redis、Python 与镜像检查，通过后在 `main` / `v*` 发布网关镜像；不执行生产部署，也不代替 Hasura、Connector 和 MySQL 的完整链路验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
+[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行网关、Redis、Python 与镜像检查，通过后在 `main` / `v*` 发布网关镜像；不执行生产部署，也不代替 Hasura、Connector 和 PostgreSQL 的完整链路验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
 
 ## 目录结构
 
@@ -251,6 +251,6 @@ docs/                           # 部署与历史验证记录
 
 ### 固定的上游来源
 
-构建脚本固定 Hasura Engine commit 和 MySQL NDC 归档及校验值，Connector 补丁仅保留 MySQL 并使用 jOOQ OSS。来源、补丁范围和许可核验记录统一见 [connector/UPSTREAM.md](connector/UPSTREAM.md)。既有记录中的 Connector 生产使用与再分发授权仍有待落实，不将本地验证视为完成发布条件。
+构建脚本固定 Hasura Engine commit 和 PostgreSQL NDC 归档及校验值，Connector 补丁将原上游模块改为仅运行 PostgreSQL，并使用 jOOQ OSS。来源、补丁范围和许可核验记录统一见 [connector/UPSTREAM.md](connector/UPSTREAM.md)。既有记录中的 Connector 生产使用与再分发授权仍有待落实，不将本地验证视为完成发布条件。
 
 隔离测试使用固定 digest 的 `ddn-engine-local-dev` 镜像。[build_engine.sh](scripts/build_engine.sh) 提供源码引擎构建入口；目标生产引擎、实际数据库结构、只读副本延迟、容量与发布网络需要单独验证。当前没有授权管理 UI、长期应用授权或自动密钥轮换。

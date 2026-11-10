@@ -1,0 +1,2 @@
+# Unified diffs retain upstream whitespace and the required blank context prefix.
+connector/*.patch whitespace=-blank-at-eol

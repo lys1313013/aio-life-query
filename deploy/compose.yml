@@ -22,10 +22,10 @@ services:
     command: ["--metadata-path", "/metadata/open_dd.json", "--authn-config-path", "/metadata/auth_config.json", "--ndc-response-size-limit", "1000000", "--request-body-limit", "65536"]
     volumes: ["../.cache/hasura:/metadata:ro"]
     networks: [query, connector]
-    depends_on: [mysql-connector]
+    depends_on: [postgresql-connector]
     restart: unless-stopped
-  mysql-connector:
-    image: ${AIO_QUERY_CONNECTOR_IMAGE:-aio-life-query-mysql-connector:local}
+  postgresql-connector:
+    image: ${AIO_QUERY_CONNECTOR_IMAGE:-aio-life-query-postgresql-connector:local}
     build:
       context: ..
       dockerfile: deploy/connector.Dockerfile

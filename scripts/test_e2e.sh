@@ -12,7 +12,7 @@ export AIO_QUERY_TEST_CONNECTOR_PORT="${AIO_QUERY_TEST_CONNECTOR_PORT:-45683}"
 export AIO_QUERY_TEST_HASURA_URL="http://127.0.0.1:$AIO_QUERY_TEST_HASURA_PORT/graphql"
 cleanup() {
   if [ -n "$connector_pid" ]; then kill "$connector_pid" 2>/dev/null || true; fi
-  docker rm -f "$test_name-hasura" "$test_name-mysql" "$test_name-redis" >/dev/null 2>&1 || true
+  docker rm -f "$test_name-hasura" "$test_name-postgres" "$test_name-redis" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 mkdir -p "$test_dir"
@@ -25,35 +25,31 @@ for port in [int(os.environ[name]) for name in ["AIO_QUERY_TEST_GATEWAY_PORT","A
         s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
         s.bind(('127.0.0.1',port))
 PY
-docker run -d --name "$test_name-mysql" -p 127.0.0.1::3306 \
-  -e MYSQL_ROOT_PASSWORD=aio-life-query-fixture-root -e MYSQL_DATABASE=aio_life \
-  mysql@sha256:ac80b6e09e5b12b4f9d5cd4f6425e43464247aa4ba4f6169da5daf59e5877f7d \
-  --max-execution-time=5000 >/dev/null
+docker run -d --name "$test_name-postgres" -p 127.0.0.1::5432 \
+  -e POSTGRES_PASSWORD=aio-life-query-fixture-root -e POSTGRES_DB=aio_life \
+  postgres:18-alpine \
+  -c statement_timeout=5000 >/dev/null
 docker run -d --name "$test_name-redis" -p 127.0.0.1::6379 \
   redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7 >/dev/null
-mysql_port="$(docker port "$test_name-mysql" 3306 | awk -F: '{print $NF}')"
+postgres_port="$(docker port "$test_name-postgres" 5432 | awk -F: '{print $NF}')"
 redis_port="$(docker port "$test_name-redis" 6379 | awk -F: '{print $NF}')"
 ready=false
 for attempt in {1..60}; do
-  if docker exec "$test_name-mysql" mysql --protocol=TCP -h127.0.0.1 -uroot -paio-life-query-fixture-root aio_life -e 'SELECT 1' >/dev/null 2>&1; then ready=true; break; fi
+  if docker exec "$test_name-postgres" psql -U postgres -d aio_life -c 'SELECT 1' >/dev/null 2>&1; then ready=true; break; fi
   sleep 1
 done
-test "$ready" = true || { echo 'MySQL 未就绪'; exit 1; }
-docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root aio_life < "$life_root/sql/1_init_table/2026-08-18_init_all_tables.sql"
-docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root <<'SQL'
-CREATE USER 'aio_query_read'@'%' IDENTIFIED BY 'fixture-query-read-password';
-GRANT SELECT (id,date,category_id,duration,user_id,is_deleted) ON aio_life.time_record TO 'aio_query_read'@'%';
-SQL
-# 仅授予显式发布字段；使用部署示例同一份白名单。
+test "$ready" = true || { echo 'PostgreSQL 未就绪'; exit 1; }
+export FLYWAY_URL="jdbc:postgresql://127.0.0.1:$postgres_port/aio_life"
+export FLYWAY_USER=postgres FLYWAY_PASSWORD=aio-life-query-fixture-root
+(cd "$life_root" && mvn -B -ntp -f tools/flyway/pom.xml compile flyway:migrate flyway:validate)
 python3 - "$task_root/deploy/readonly-account.sql.example" <<'PYSQL' > "$test_dir/grants.sql"
 from pathlib import Path
 import sys
-text=Path(sys.argv[1]).read_text()
-print('\n'.join(line.replace("'CONNECTOR_HOST'", "'%'") for line in text.splitlines() if not line.startswith('CREATE USER')))
+print(Path(sys.argv[1]).read_text().replace('REPLACE_WITH_RANDOM_PASSWORD','fixture-query-read-password'))
 PYSQL
-docker exec -i "$test_name-mysql" mysql -uroot -paio-life-query-fixture-root < "$test_dir/grants.sql"
-for rejected in 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT password FROM user LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
-  if docker exec "$test_name-mysql" mysql -uaio_query_read -pfixture-query-read-password aio_life -e "$rejected" >/dev/null 2>&1; then
+docker exec -i "$test_name-postgres" psql -v ON_ERROR_STOP=1 -U postgres -d aio_life < "$test_dir/grants.sql"
+for rejected in 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT password FROM "user" LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
+  if docker exec "$test_name-postgres" psql -U aio_query_read -d aio_life -c "$rejected" >/dev/null 2>&1; then
     echo '只读列权限验证失败'; exit 1
   fi
 done
@@ -62,11 +58,11 @@ export AIO_QUERY_CONNECTOR_KEY=fixture-connector-key-at-least-32-characters
 export AIO_QUERY_CONNECTOR_URL="http://host.docker.internal:$AIO_QUERY_TEST_CONNECTOR_PORT"
 export AIO_QUERY_AUTH_WEBHOOK_URL="http://host.docker.internal:$AIO_QUERY_TEST_GATEWAY_PORT/internal/hasura/auth"
 python3 "$task_root/scripts/build_metadata.py" --output "$test_dir/metadata"
-AIO_QUERY_TEST_JDBC_URL="jdbc:mysql://127.0.0.1:$mysql_port/aio_life?user=aio_query_read&password=fixture-query-read-password&useSSL=false&allowPublicKeyRetrieval=true" \
+AIO_QUERY_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$postgres_port/aio_life?user=aio_query_read&password=fixture-query-read-password&sslmode=disable" \
   java --class-path "$task_root/.cache/connector/quarkus-app/lib/main/*" "$task_root/scripts/ConnectorDeadlineCheck.java" "$test_dir/metadata/configuration.json"
 HASURA_CONFIGURATION_DIRECTORY="$test_dir/metadata" \
   HASURA_SERVICE_TOKEN_SECRET="$AIO_QUERY_CONNECTOR_KEY" \
-  JDBC_URL="jdbc:mysql://127.0.0.1:$mysql_port/aio_life?user=aio_query_read&password=fixture-query-read-password&useSSL=false&allowPublicKeyRetrieval=true" \
+  JDBC_URL="jdbc:postgresql://127.0.0.1:$postgres_port/aio_life?user=aio_query_read&password=fixture-query-read-password&sslmode=disable" \
   QUARKUS_HTTP_PORT="$AIO_QUERY_TEST_CONNECTOR_PORT" QUARKUS_HTTP_HOST=0.0.0.0 QUARKUS_OTEL_SDK_DISABLED=true QUARKUS_HTTP_ACCESS_LOG_ENABLED=false \
   java -jar "$task_root/.cache/connector/quarkus-app/quarkus-run.jar" > "$test_dir/connector.log" 2>&1 &
 connector_pid=$!
@@ -84,11 +80,11 @@ test "$ready" = true || { docker logs "$test_name-hasura" > "$test_dir/hasura.lo
 (cd "$task_root" && AIO_QUERY_TEST_REDIS_PORT="$redis_port" mvn -B package)
 export AIO_QUERY_E2E=1
 export AIO_QUERY_TEST_GATEWAY_JAR="$task_root/target/aio-life-query-0.1.0-SNAPSHOT.jar"
-export AIO_LIFE_DB_URL="127.0.0.1:$mysql_port" AIO_LIFE_DB_PASSWORD=aio-life-query-fixture-root
+export AIO_LIFE_DB_URL="127.0.0.1:$postgres_port" AIO_LIFE_DB_USERNAME=postgres AIO_LIFE_DB_PASSWORD=aio-life-query-fixture-root
 export AIO_LIFE_REDIS_HOST=127.0.0.1 AIO_LIFE_REDIS_PORT="$redis_port" AIO_LIFE_REDIS_PASSWORD= AIO_LIFE_NEO4J_ENABLED=false
 (cd "$life_root" && mvn -B -Dtest=QueryAccessHttpIntegrationTest,QueryHasuraEndToEndTest,PersistenceArchitectureTest \
-  -Dspring.datasource.url="jdbc:mysql://127.0.0.1:$mysql_port/aio_life?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai" \
-  -Dspring.datasource.username=root -Dspring.datasource.password=aio-life-query-fixture-root -Dspring.data.redis.host=127.0.0.1 \
+  -Dspring.datasource.url="jdbc:postgresql://127.0.0.1:$postgres_port/aio_life?stringtype=unspecified" \
+  -Dspring.datasource.username=postgres -Dspring.datasource.password=aio-life-query-fixture-root -Dspring.data.redis.host=127.0.0.1 \
   -Dspring.data.redis.port="$redis_port" -Dspring.data.redis.password= test)
 docker logs "$test_name-hasura" > "$test_dir/hasura.log" 2>&1
 echo '六数据集端到端测试完成；隔离容器会自动清理。'

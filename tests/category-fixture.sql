@@ -1,16 +1,16 @@
 CREATE TABLE time_record (
   id VARCHAR(64) PRIMARY KEY, date DATE NOT NULL, category_id BIGINT NULL,
-  duration SMALLINT UNSIGNED NOT NULL DEFAULT 420, create_user BIGINT NULL,
-  start_time SMALLINT UNSIGNED NOT NULL DEFAULT 0, end_time SMALLINT UNSIGNED NOT NULL DEFAULT 420,
-  title VARCHAR(255) NULL, description TEXT NULL, is_manual TINYINT NOT NULL DEFAULT 1,
-  create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, update_user BIGINT NULL,
-  update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, relate_id BIGINT NULL,
-  relate_type TINYINT NULL, user_id BIGINT NOT NULL, is_deleted TINYINT NOT NULL DEFAULT 0
-) DEFAULT CHARSET=utf8mb4;
+  duration INTEGER NOT NULL DEFAULT 420, create_user BIGINT NULL,
+  start_time INTEGER NOT NULL DEFAULT 0, end_time INTEGER NOT NULL DEFAULT 420,
+  title VARCHAR(255) NULL, description TEXT NULL, is_manual SMALLINT NOT NULL DEFAULT 1,
+  create_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, update_user BIGINT NULL,
+  update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, relate_id BIGINT NULL,
+  relate_type SMALLINT NULL, user_id BIGINT NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
+);
 CREATE TABLE time_tracker_category (
   id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, template_id BIGINT NULL,
-  name VARCHAR(100) NULL, is_deleted TINYINT NOT NULL DEFAULT 0
-) DEFAULT CHARSET=utf8mb4;
+  name VARCHAR(100) NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
+);
 INSERT INTO time_tracker_category(id,user_id,template_id,name,is_deleted) VALUES
   (1,0,NULL,'休息',0), (2,0,NULL,'工作',0), (3,0,NULL,'休息',1),
   (4,101,NULL,'午休',0), (5,102,NULL,'休息',0), (6,0,NULL,'公共原名',0),
@@ -26,8 +26,11 @@ INSERT INTO time_record(id,date,category_id,user_id) VALUES
   ('other-user-own','2026-10-01',5,102);
 UPDATE time_record SET start_time=60 WHERE id='a8';
 UPDATE time_record SET is_deleted=1 WHERE id='deleted-record';
-CREATE USER 'fixture_read'@'%' IDENTIFIED BY 'fixture-read';
+CREATE ROLE fixture_read LOGIN PASSWORD 'fixture-read';
+GRANT USAGE ON SCHEMA public TO fixture_read;
+ALTER ROLE fixture_read SET default_transaction_read_only=on;
+ALTER ROLE fixture_read SET statement_timeout='5s';
 GRANT SELECT (id,date,category_id,duration,create_user,start_time,end_time,title,description,is_manual,create_time,update_user,update_time,relate_id,relate_type,user_id,is_deleted)
-  ON aio_life.time_record TO 'fixture_read'@'%';
+  ON public.time_record TO fixture_read;
 GRANT SELECT (id,user_id,template_id,name,is_deleted)
-  ON aio_life.time_tracker_category TO 'fixture_read'@'%';
+  ON public.time_tracker_category TO fixture_read;

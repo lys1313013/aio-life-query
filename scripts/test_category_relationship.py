@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated HTTP -> gateway -> Hasura -> readonly MySQL relationship acceptance test.
+"""Isolated HTTP -> gateway -> Hasura -> readonly PostgreSQL relationship acceptance test.
 
 Requires Docker, JDK 21, a packaged gateway and the built connector. Authentication
 uses a local fixture; no real credentials or business database are accessed.
@@ -147,28 +147,27 @@ def main(extra_fixture='', acceptance=None):
         raise RuntimeError('Readiness timed out: ' + url)
 
     try:
-        mysql, redis, engine = (prefix + suffix for suffix in ['-mysql', '-redis', '-hasura'])
+        postgres, redis, engine = (prefix + suffix for suffix in ['-postgres', '-redis', '-hasura'])
         for name, image, port, options in [
-            (mysql, os.environ.get('AIO_QUERY_CATEGORY_MYSQL_IMAGE', 'mysql@sha256:ac80b6e09e5b12b4f9d5cd4f6425e43464247aa4ba4f6169da5daf59e5877f7d'), '3306', ['-e', 'MYSQL_ROOT_PASSWORD=fixture-root', '-e', 'MYSQL_DATABASE=aio_life']),
+            (postgres, os.environ.get('AIO_QUERY_CATEGORY_POSTGRES_IMAGE', 'postgres:18-alpine'), '5432', ['-e', 'POSTGRES_PASSWORD=fixture-root', '-e', 'POSTGRES_DB=aio_life']),
             (redis, 'redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7', '6379', [])
         ]:
-            if name == mysql and os.environ.get('AIO_QUERY_CATEGORY_MYSQL_PLATFORM'):
-                options += ['--platform', os.environ['AIO_QUERY_CATEGORY_MYSQL_PLATFORM']]
+            if name == postgres and os.environ.get('AIO_QUERY_CATEGORY_POSTGRES_PLATFORM'):
+                options += ['--platform', os.environ['AIO_QUERY_CATEGORY_POSTGRES_PLATFORM']]
             docker('run', '-d', '--name', name, '-p', '127.0.0.1::' + port, *options, image)
             containers.append(name)
-        mysql_port = docker('port', mysql, '3306').rsplit(':', 1)[1]
+        postgres_port = docker('port', postgres, '5432').rsplit(':', 1)[1]
         redis_port = docker('port', redis, '6379').rsplit(':', 1)[1]
         for _ in range(90):
             # The initialization server accepts socket connections before setup is complete.
-            ready = subprocess.run(['docker', 'exec', mysql, 'mysql', '--protocol=TCP', '-h127.0.0.1',
-                                    '-uroot', '-pfixture-root', 'aio_life', '-e', 'SELECT 1'],
+            ready = subprocess.run(['docker', 'exec', postgres, 'psql', '-U', 'postgres', '-d', 'aio_life', '-c', 'SELECT 1'],
                                    capture_output=True).returncode == 0
             if ready:
                 break
             time.sleep(0.5)
-        assert ready, 'MySQL startup failed'
+        assert ready, 'PostgreSQL startup failed'
         fixture = (ROOT / 'tests/category-fixture.sql').read_text()
-        docker('exec', '-i', mysql, 'mysql', '--default-character-set=utf8mb4', '-uroot', '-pfixture-root', 'aio_life', sql=fixture + '\n' + extra_fixture)
+        docker('exec', '-i', postgres, 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'aio_life', sql=fixture + '\n' + extra_fixture)
         config = base / 'metadata'
         bundle, schema = metadata.build('http://host.docker.internal:' + str(connector_proxy.server_port), key)
         auth_config = {'version': 'v4', 'definition': {'mode': {'webhook': {
@@ -179,7 +178,7 @@ def main(extra_fixture='', acceptance=None):
                                       ('configuration.json', metadata.connector_config()), ('ndc-schema.json', schema)])
         start_process('connector', [java, '-jar', str(ROOT / '.cache/connector/quarkus-app/quarkus-run.jar')], {
             'HASURA_CONFIGURATION_DIRECTORY': str(config), 'HASURA_SERVICE_TOKEN_SECRET': key,
-            'JDBC_URL': 'jdbc:mysql://127.0.0.1:' + mysql_port + '/aio_life?user=fixture_read&password=fixture-read&useSSL=false&allowPublicKeyRetrieval=true',
+            'JDBC_URL': 'jdbc:postgresql://127.0.0.1:' + postgres_port + '/aio_life?user=fixture_read&password=fixture-read&sslmode=disable',
             'QUARKUS_HTTP_HOST': '0.0.0.0', 'QUARKUS_HTTP_PORT': str(connector_port),
             'QUARKUS_OTEL_SDK_DISABLED': 'true', 'QUARKUS_HTTP_ACCESS_LOG_ENABLED': 'false'})
         wait_ready('http://127.0.0.1:' + str(connector_port) + '/capabilities', key)
@@ -231,10 +230,10 @@ def main(extra_fixture='', acceptance=None):
         assert len(by_category) == 1 and by_category[0]['id'] == 'a4', by_category
         status, rejected = request(url, {'query': example['query'].replace('category { id name }', 'category { id userId }')}, 'user-a')
         assert status == 400, rejected
-        denied = subprocess.run(['docker', 'exec', mysql, 'mysql', '-ufixture_read', '-pfixture-read', 'aio_life', '-e', 'UPDATE time_record SET start_time=1'], capture_output=True)
+        denied = subprocess.run(['docker', 'exec', postgres, 'psql', '-U', 'fixture_read', '-d', 'aio_life', '-c', 'UPDATE time_record SET start_time=1'], capture_output=True)
         assert denied.returncode != 0, 'Database account unexpectedly permits writes'
         if acceptance:
-            acceptance(query, mysql, base, url)
+            acceptance(query, postgres, base, url)
         print('PASS: exact query, effective category names, BIGINT strings, nested aliases/nulls, aggregates, user/deletion isolation and read-only grants')
         print('Response: ' + str(base / 'response.json'))
     finally:
