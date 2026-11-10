@@ -56,7 +56,7 @@ INSERT INTO time_record(id,date,category_id,user_id,start_time,end_time) VALUES
 UPDATE time_record SET is_deleted=1 WHERE id='deleted';
 """)
     # 只在本脚本新建的隔离 PostgreSQL 中加载当前表定义和模拟账号。
-    schema = (SERVER / 'sql/migrations/postgresql/V20261110_01__postgresql_schema.sql').read_text()
+    schema = (SERVER / 'sql/migrations/V20261110_01__postgresql_schema.sql').read_text()
     goal_sql = re.search(r'CREATE TABLE "goal" \(.*?\n \);', schema, re.S).group()
     runner.docker('exec', '-i', postgres, 'psql', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', 'aio_life',
                   sql=goal_sql.replace(' COLLATE aio_unicode_ci', '') + "\nINSERT INTO goal(id,user_id,title,target_value,current_value) VALUES(8000,101,'migration-fixture',40,26);\nCREATE TABLE \"user\" (id BIGINT PRIMARY KEY,is_deleted SMALLINT DEFAULT 0); INSERT INTO \"user\"(id) VALUES(101),(102);")
