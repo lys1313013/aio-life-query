@@ -1,6 +1,7 @@
 package top.aiolife.query;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -29,6 +30,21 @@ class CategoryRelationshipTest {
         assertEquals(java.util.Map.of("id", "id", "name", "name"), plan.relationSelections().get("category"));
         assertTrue(compile("{timeRecordStats(where:{"+range+",category:{name:{_eq:\"休息\"}}}){count}}").query()
                 .contains("filter: {where: $where}"));
+    }
+
+    @Test void goalExampleFiltersBySuppliedNameWithoutResolvingAnId() throws Exception {
+        var config = json.readTree(Path.of("examples/goal-sleep.json").toFile());
+        var variables = (ObjectNode) json.readTree(config.path("progressVariables").asText());
+        variables.put("start", "2026-01-01").put("end", "2027-01-01");
+        var compiler = new QueryCompiler(json);
+        var plan = compiler.compile(compiler.graphqlRequest(new QueryCompiler.GraphqlRequest(
+                config.path("progressQuery").asText(), null, variables, null)));
+        assertEquals("休息", plan.variables().at("/where/category/name/_eq").asText());
+        assertTrue(plan.variables().at("/where/category/id").isMissingNode());
+        variables.put("categoryName", "午休");
+        var changed = compiler.compile(compiler.graphqlRequest(new QueryCompiler.GraphqlRequest(
+                config.path("progressQuery").asText(), null, variables, null)));
+        assertEquals("午休", changed.variables().at("/where/category/name/_eq").asText());
     }
 
     @ParameterizedTest

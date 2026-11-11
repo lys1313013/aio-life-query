@@ -20,13 +20,13 @@ if [ ! -d "$source_dir" ]; then
   (cd "$source_dir" && patch -p1 < "$task_root/connector/postgresql-readonly.patch")
   printf '%s' "$patch_sha" > "$source_dir/.aio-query-patch-sha"
 fi
-test "$(cat "$source_dir/.aio-query-patch-sha")" = "$patch_sha" || { echo '补丁已改变，请移走 .cache/connector-source 后重新构建'; exit 1; }
+test "$(cat "$source_dir/.aio-query-patch-sha")" = "$patch_sha" || { echo '补丁已改变，请移走 .cache/postgresql-connector-source 后重新构建'; exit 1; }
 cd "$source_dir"
 set --
 if [ -n "${AIO_QUERY_JAVA_HOME:-${JAVA_HOME:-}}" ]; then set -- "-Dorg.gradle.java.home=${AIO_QUERY_JAVA_HOME:-$JAVA_HOME}"; fi
 "${AIO_QUERY_GRADLE:-./gradlew}" "$@" :ndc-connector-postgresql:build -x test --no-daemon --console=plain
 mkdir -p "$task_root/.cache/connector"
-# 用完整新产物替换，避免旧 MySQL 驱动或其他过期依赖混入镜像。
+# 用完整新产物替换，避免过期驱动或其他依赖混入镜像。
 staging="$(mktemp -d "$task_root/.cache/connector/.postgresql-build.XXXXXX")"
 cp -R ndc-connector-postgresql/build/quarkus-app "$staging/"
 rm -rf "$task_root/.cache/connector/quarkus-app"

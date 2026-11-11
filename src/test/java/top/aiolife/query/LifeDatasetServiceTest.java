@@ -84,6 +84,28 @@ class LifeDatasetServiceTest {
         assertThrows(QueryException.class,()->service.execute("token",request(dataset,"id ticketPrice")));
     }
 
+    @Test void modelMetadataFollowsPublishedCapabilitiesAndHidesInternalRelationFields() {
+        when(access.evaluate("token", "catalog")).thenReturn(user);
+        when(access.evaluate("token")).thenReturn(user);
+        var detail = json.valueToTree(service.catalog("token", "time_record"));
+        assertEquals("时迹", detail.path("title").asText());
+        assertEquals("timeRecords", detail.path("root").asText());
+        assertEquals("timeRecordStats", detail.path("statsRoot").asText());
+        assertTrue(detail.at("/fields/date/sortable").asBoolean());
+        assertEquals("countDistinct", detail.at("/fields/date/distinctFunctions/0").asText());
+        assertEquals("分钟", detail.at("/fields/durationMinutes/unit").asText());
+        assertEquals(3, detail.at("/fields/durationMinutes/aggregateFunctions").size());
+        assertEquals("String", detail.at("/fields/date/graphqlType").asText());
+        assertFalse(detail.at("/fields/description/sortable").asBoolean());
+        assertEquals("TimeCategory", detail.at("/relations/category/typeName").asText());
+        assertEquals(2, detail.at("/relations/category/fields").size());
+        assertTrue(detail.at("/relations/category/fields").has("name"));
+        assertFalse(detail.at("/relations/category/fields").has("recordId"));
+        assertFalse(detail.at("/relations/category/fields").has("userId"));
+        for (String secret : new String[]{"nativeSql", "sourceField", "targetField", "collection", "sqlType", "column"})
+            assertFalse(detail.toString().contains("\"" + secret + "\""), secret);
+    }
+
     @Test void webhookUsesOnlyTheDatasetStoredInTheSingleUseTicket() {
         when(store.consume("ticket")).thenReturn(new ExecutionStore.Ticket(user,"query","hash","movie-v3",Long.MAX_VALUE,"movie"));
         assertEquals(Map.of("x-hasura-role","ai_movie_reader","x-hasura-user-id",user.userId()),service.webhook("ticket"));

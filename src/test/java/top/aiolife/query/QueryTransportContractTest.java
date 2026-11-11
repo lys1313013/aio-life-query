@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -66,6 +67,11 @@ class QueryTransportContractTest {
         when(access.evaluate(TOKEN)).thenThrow(QueryException.denied());
         rest.perform(restRequest(json, EXECUTE_PATH, Map.of("query", QUERY)))
                 .andExpect(status().isForbidden());
+        doThrow(QueryException.secondaryLock("/query/workbench")).when(access).evaluate(TOKEN);
+        rest.perform(restRequest(json, EXECUTE_PATH, Map.of("query", QUERY)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.rscode").value("SECONDARY_LOCK_REQUIRED"))
+                .andExpect(jsonPath("$.menuPath").value("/query/workbench"));
         doReturn(user).when(access).evaluate(TOKEN);
 
         assertMinimalMcpRequest(service, json);

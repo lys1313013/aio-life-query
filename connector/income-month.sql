@@ -1,5 +1,5 @@
 -- 受控只读派生模型：按用户、收入类型、自然月汇总税前收入，保留用户维度供 Hasura 权限过滤。
--- 排除逻辑删除；不按名称推断工资类型，调用方使用实际收入类型 ID 筛选。
+-- 排除逻辑删除；类型名称通过 incomeType 关系筛选，不按名称猜测或重分组业务类型。
 SELECT CONCAT(user_id, ':', COALESCE(CAST(income_type_id AS TEXT), 'null'), ':', CAST(month AS TEXT)) AS id,
        user_id, income_type_id, month, monthly_amount, 0 AS is_deleted
 FROM (

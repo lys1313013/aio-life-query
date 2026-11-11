@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.Map;
 import java.util.List;
+import java.util.LinkedHashMap;
 
 @RestControllerAdvice
 public class QueryErrors {
@@ -22,8 +23,10 @@ public class QueryErrors {
                             : Map.of("errors", List.of(Map.of("message", error.getMessage(), "extensions",
                                     Map.of("code", error.code(), "menuPath", error.menuPath())))));
         }
-        return ResponseEntity.status(error.status()).header("Cache-Control", "no-store")
-                .body(Map.of("rscode", error.code(), "result", error.getMessage()));
+        var body = new LinkedHashMap<String, Object>();
+        body.put("rscode", error.code()); body.put("result", error.getMessage());
+        if (error.menuPath() != null) body.put("menuPath", error.menuPath());
+        return ResponseEntity.status(error.status()).header("Cache-Control", "no-store").body(body);
     }
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<?> invalid(HttpServletRequest request) { return query(QueryException.invalid(), request); }

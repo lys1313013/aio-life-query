@@ -1,8 +1,8 @@
 # Docker 打包与 GitHub Actions
 
-文档核对日期：2026-10-18。按当前 Dockerfile、Compose 和工作流核对；本次未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
+文档核对日期：2026-11-11。按当前 Dockerfile、Compose 和工作流核对；本次未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
 
-沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为提供 REST / GraphQL HTTP / MCP 的自有 Java 网关 `aio-life-query`；Hasura 和 MySQL Connector 保持独立镜像与配置，不能混入网关镜像。
+沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为提供 REST / GraphQL HTTP / MCP 的自有 Java 网关 `aio-life-query`；Hasura 和 PostgreSQL Connector 保持独立镜像与配置，不能混入网关镜像。
 
 ## Docker 文件
 
@@ -50,7 +50,7 @@ bash scripts/smoke_image.sh aio-life-query:local
 
 工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试任务包含 Java 测试及 Python 元数据文件权限、原子替换、失败恢复、六数据集字段授权和分类关系权限测试；发现失败、缺少 Java 报告或 Java 跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64，工作流没有逐架构运行冒烟检查。
 
-此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 MySQL 的完整隔离验收仍使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
+此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 PostgreSQL 的完整隔离验收使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
 
 发布镜像默认是 `ghcr.io/<owner>/<repository>`，名称转为小写；当前仓库对应 `ghcr.io/lys1313013/aio-life-query`，这是工作流目标名称，不表示已核实镜像存在。GHCR 使用工作流的 `GITHUB_TOKEN`，仅发布任务拥有 `packages: write` 权限，不需要另建 GHCR 密钥。
 
@@ -82,7 +82,7 @@ bash scripts/smoke_image.sh aio-life-query:local
 `deploy/compose.yml` 同时支持本地构建与运行已有镜像：
 
 - `AIO_QUERY_GATEWAY_IMAGE`：默认 `aio-life-query:local`，可指定 GHCR/ACR 的标签或 digest。
-- `AIO_QUERY_CONNECTOR_IMAGE`：默认 `aio-life-query-mysql-connector:local`，可指定独立维护并验收的 Connector 镜像。
+- `AIO_QUERY_CONNECTOR_IMAGE`：默认 `aio-life-query-postgresql-connector:local`，可指定独立维护并验收的 Connector 镜像。
 - `AIO_QUERY_ENGINE_IMAGE`：必须显式指定已验证的引擎镜像，原有要求保持不变。
 
 部署主机先注入服务密钥、只读 JDBC、Redis 配置和 `AIO_QUERY_CONFIG_GID`，并生成受保护元数据；完整变量见 [README](../README.md#运行环境变量)。Connector/Hasura 需要预先准备，网关替换示例（在本仓库根目录执行）：
@@ -93,14 +93,14 @@ docker compose -f deploy/compose.yml pull gateway
 docker compose -f deploy/compose.yml up -d --no-build gateway
 ```
 
-启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时显式执行 `docker compose -f deploy/compose.yml build gateway mysql-connector`；Connector 编译产物须先通过原有脚本准备。GitHub Actions 只构建及推送镜像，没有 SSH 部署或自动修改生产服务。
+启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时，先执行 `bash scripts/build_connector.sh` 准备 PostgreSQL Connector 编译产物，再执行 `docker compose -f deploy/compose.yml build gateway postgresql-connector`。Hasura 引擎镜像需单独准备，可使用 `bash scripts/build_engine.sh` 构建，并在目标环境验收后设置 `AIO_QUERY_ENGINE_IMAGE`。GitHub Actions 只构建及推送网关镜像，没有 SSH 部署或自动修改生产服务。
 
 ### 升级字段和分类关系
 
-当前时迹为 `time-record-v3`，其他五个数据集为 v2，包含六表 111 个物理字段及 `time_record.category` 关系。升级旧版本时按以下顺序准备：
+当前数据集、发布版本与关系以 `src/main/resources/datasets.json`、`src/main/resources/relationships.json` 和 [README](../README.md#当前数据集) 为准。升级时按以下顺序准备：
 
-1. 核对目标表结构，按 `deploy/readonly-account.sql.example` 更新现有账号的列级 GRANT，包含分类表 `time_tracker_category` 的五列；已有账号不重复执行 `CREATE USER`。
-2. 使用当前 `connector/mysql-readonly.patch` 重新构建 Connector。脚本若报告补丁指纹变化，先移走旧 `.cache/connector-source` 后再构建；复用旧运行目录不会自动应用新补丁。
+1. 核对 PostgreSQL 18+ 目标表结构，按 `deploy/readonly-account.sql.example` 更新现有账号的列级 GRANT，包含分类表 `time_tracker_category`、月收入源表 `income` 和类型字典表 `user_dict_data` 的所需列；已有账号不重复执行 `CREATE ROLE`。
+2. 使用当前 `connector/postgresql-readonly.patch`，执行 `bash scripts/build_connector.sh` 重新构建 Connector。脚本若报告补丁指纹变化，先移走 `.cache/postgresql-connector-source` 后再构建；复用旧运行目录不会自动应用新补丁。
 3. 使用当前配置执行 `python3 scripts/build_metadata.py`。默认输出为 `.cache/hasura/`，Compose 从此处读取；目录 `0750`、文件 `0640`，容器附加组必须有读取权限。每个文件独立原子替换，整个配置包不是一次事务；生成失败后修复并完整重跑，再重启相关服务。
 4. 部署匹配的 Connector、Hasura 元数据和网关镜像，并重新验证实际查询；REST / MCP 客户端重新读取目录版本。仅替换网关镜像不能完成本次字段及关系升级。
 

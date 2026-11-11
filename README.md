@@ -170,6 +170,8 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 ## 当前数据集
 
+配套 Web 提供查询工作台和数据模型页面，接入方式见[页面说明](https://github.com/lys1313013/aio-life-front/blob/main/docs/data-query.md)。数据集描述接口还返回 `title/typeName/root/statsRoot`、字段 `label/graphqlType/nullable/sortable/aggregateFunctions/distinctFunctions` 和公开 `relations`；这些能力均从发布白名单派生，不暴露物理表、派生 SQL 或内部关系键。REST 二级锁错误附带 `menuPath`，供现有解锁流程使用。
+
 完整字段、类型和语义以 [datasets.json](src/main/resources/datasets.json) 及描述接口返回的 SDL 为准，避免在客户端硬编码字段目录。
 
 | 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
@@ -206,6 +208,14 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 分类名称按当前用户覆盖后的有效名称匹配，同名分类均可匹配；公共分类保留公共 ID。停用分类保留历史元数据，删除、缺失或其他用户私有分类返回 `category: null`。关系来自 [relationships.json](src/main/resources/relationships.json) 和[固定派生 SQL](connector/time-record-category.sql)，无需创建数据库视图，没有独立公开根查询。
 
 目标自定义查询的三个配置示例为 [俯卧撑](examples/goal-pushups.json)、[零点在睡觉](examples/goal-sleep.json)、[最高单月工资](examples/goal-salary.json)。这些是业务目标请求，使用 `progressQuery` 等字段，不能直接发到 `/graphql`；预览与刷新通过业务后端完成。完整契约见[共同文档](https://github.com/lys1313013/aio-life/blob/main/docs/目标自定义查询进度.md)。运行 `python3 scripts/test_goal_progress.py` 可对隔离 PostgreSQL / Hasura / Connector 及业务目标保存刷新进行联合验收；使用本地授权桩，不代表生产鉴权验收。
+
+### 按运动类型、收入类型名称查询
+
+运动明细可选取 `exerciseType { id name }`，明细与汇总支持 `where.exerciseType.name._eq`；月收入明细可选取 `incomeType { id name }`，明细与汇总支持 `where.incomeType.name._eq`。名称通过服务端固定派生关系查询，客户端只提交名称字符串，不查字典或转换 ID。对应发布版本为 `exercise-record-v4`、`income-month-v2`。
+
+名称采用当前用户的有效字典标签。公共只读类型使用公共名称，其他公共类型允许当前用户覆盖；停用类型保留历史名称。删除、缺失、其他用户及错误字典域的类型关系返回 `null`，名称筛选不会匹配它们。同名类型均可匹配；月收入仍按原类型与自然月分组，不合并同名类型，也不改变税前金额口径。关系没有独立字典根查询。
+
+部署需同步网关、Hasura 元数据和 Connector 配置。已有只读账号使用 `psql -v query_role=实际只读角色 -f deploy/grant-type-relations.sql` 增加 `user_dict_data` 的列级 SELECT；新账号见 [readonly-account.sql.example](deploy/readonly-account.sql.example)。这次不新增业务表或数据库视图，不需要 Flyway 结构迁移。
 
 分类专项验证需要先构建 Connector 和网关 JAR，再运行 `python3 scripts/test_category_relationship.py`。PostgreSQL 仅支持 18+。此脚本使用本地授权桩，不能代替真实后端授权验收。
 

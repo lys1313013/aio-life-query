@@ -21,7 +21,7 @@
 
 ## 构建与验证
 
-在本仓库根目录执行 `bash scripts/build_connector.sh`，输出为 `.cache/connector/quarkus-app/`。脚本校验归档 SHA-256，并记录补丁 SHA-256；已有源码缓存与当前补丁不一致时直接失败，需先移走 `.cache/connector-source` 再重建。构建使用 `-x test`，成功只表示打包完成。
+在本仓库根目录执行 `bash scripts/build_connector.sh`，输出为 `.cache/connector/quarkus-app/`。脚本校验归档 SHA-256，并记录补丁 SHA-256；已有源码缓存与当前补丁不一致时直接失败，需先移走 `.cache/postgresql-connector-source` 再重建。构建使用 `-x test`，成功只表示打包完成。
 
 准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → PostgreSQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。PostgreSQL 版本要求见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
 
@@ -32,3 +32,5 @@
 Hasura 测试镜像是固定 digest 的 `ddn-engine-local-dev`；生产源码引擎需要另行构建与同等验收，详见 [README](../README.md#独立部署)。GitHub Actions 仅发布 Java 网关，不构建或发布本 Connector 和 Hasura 引擎，详见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。
 
 月收入派生模型来自 [`income-month.sql`](income-month.sql)，按用户、收入类型、自然月分组后公开最大值等受控聚合。需要 `income` 的 `user_id/inc_type_id/inc_date/amt/is_deleted` 列级 SELECT；不修改 Connector 补丁，不接收客户端 SQL。数值聚合扩展为 `sum/max/min`，时迹日期支持 `countDistinct`。许可和生产引擎边界仍按上文执行。
+
+运动与收入类型名称关联（2026-11-11）：[`exercise-record-type.sql`](exercise-record-type.sql) 和 [`income-month-type.sql`](income-month-type.sql) 通过记录所属用户关联 `user_dict_data`，限定 `exercise_type` / `income_type` 字典域及未删除的基础项。公共只读标签不应用覆盖，其他公共类型使用当前用户最新未删除覆盖；停用项仍服务历史查询。每条运动记录、每个月收入分组至多关联一个类型，角色权限继续限定记录用户。月收入复合 ID 与原派生模型完全一致，不改变金额聚合口径。新增关系仅需更新元数据与列级只读授权，不修改 Connector 补丁。

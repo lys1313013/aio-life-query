@@ -12,7 +12,6 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.Map;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 
 @Service
@@ -46,7 +45,7 @@ public class QueryService {
                 if (error.status() == 403) continue;
                 throw error;
             }
-            available.add(Map.of("name", dataset.name(), "description", dataset.description(),
+            available.add(Map.of("name", dataset.name(), "title", QueryModelMetadata.title(dataset.name()), "description", dataset.description(),
                     "capabilities", List.of("details", "aggregate")));
         }
         audit.write(UUID.randomUUID().toString(), user, "CATALOG_READ", null, 0, "catalog");
@@ -56,6 +55,9 @@ public class QueryService {
     private Object describe(QueryDatasets.Dataset dataset) {
         var output = new LinkedHashMap<String, Object>();
         output.put("name", dataset.name()); output.put("domain", dataset.domain());
+        output.put("title", QueryModelMetadata.title(dataset.name()));
+        output.put("typeName", dataset.typeName()); output.put("root", dataset.root()); output.put("statsRoot", dataset.statsRoot());
+        output.put("relations", QueryModelMetadata.relations(dataset));
         output.put("description", dataset.description()); output.put("releaseId", dataset.release());
         output.put("graphqlSdl", dataset.sdl());
         output.put("maxDateRangeDays", QueryProperties.MAX_DATE_RANGE_DAYS); output.put("maxRows", 1000);
@@ -68,21 +70,9 @@ public class QueryService {
         output.put("defaultOrder", dataset.rangeFields().getFirst() + " Desc, id Asc");
         var fields = new LinkedHashMap<String, Object>();
         dataset.fields().forEach((name, field) -> {
-            var info = new LinkedHashMap<String, Object>();
-            info.put("type", field.apiType()); info.put("kind", field.kind());
-            info.put("filterOperators", switch (field.kind()) {
-                case "DATE", "DATETIME" -> List.of("_gte", "_lt");
-                case "INT", "DECIMAL" -> List.of("_eq", "_gte", "_lte");
-                case "JSON" -> List.of();
-                default -> List.of("_eq");
-            });
-            if ("STATUS".equals(field.kind())) info.put("values", List.of("not_started", "in_progress", "completed", "on_hold"));
-            if ("ID".equals(field.kind())) info.put("description", "字符串标识符，保留精度，不转换为数字");
-            if ("time_record".equals(dataset.name()) && Set.of("startTime", "endTime").contains(name))
-                info.put("description", "当天分钟数，0=00:00，1439=23:59，闭区间端点");
-            if (name.equals("durationMinutes")) info.put("unit", "分钟");
-            if (name.equals("ticketPrice")) info.put("unit", "元");
-            fields.put(name, info);
+            fields.put(name, QueryModelMetadata.field(dataset.name(), name, field,
+                    dataset.orderFields().contains(name), dataset.aggregateFields().contains(name) ? List.of("sum", "max", "min") : List.of(),
+                    dataset.distinctFields() != null && dataset.distinctFields().contains(name)));
         });
         output.put("fields", fields);
         return output;

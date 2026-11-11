@@ -22,3 +22,7 @@ GRANT SELECT (id, user_id, template_id, name, is_deleted)
 -- 月收入模型仅需要这些源列，不授予额外表或写入权限。
 GRANT SELECT (user_id, inc_type_id, inc_date, amt, is_deleted)
   ON public.income TO aio_query_read;
+
+-- 运动和月收入类型名称关系；保留公共、私有及个人覆盖的有效名称，排除已删除项。
+GRANT SELECT (id, user_id, template_id, dict_type, dict_label, is_readonly, is_deleted)
+  ON public.user_dict_data TO aio_query_read;
