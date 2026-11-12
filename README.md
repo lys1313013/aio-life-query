@@ -176,7 +176,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 | 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
 | --- | --- | --- | --- | --- |
-| `time_record` | `time` | `time-record-v4` | `timeRecords` / `timeRecordStats` | `date` |
+| `time_record` | `time` | `time-record-v5` | `timeRecords` / `timeRecordStats` | `date` |
 | `exercise_record` | `exercise` | `exercise-record-v3` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
 | `read_record` | `reading` | `read-record-v3` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
 | `movie` | `movie` | `movie-v3` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
@@ -197,7 +197,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
 | JDBC / PostgreSQL 执行时限 | 5 秒 / `statement_timeout=5000` |
 
-所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startTime/endTime` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
+所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
 没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由 JDBC 和数据库时限约束。
 
