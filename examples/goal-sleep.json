@@ -5,7 +5,7 @@
   "startDate": "2026-01-01 00:00:00",
   "endDate": "2026-12-31 23:59:59",
   "progressMode": "graphql",
-  "progressQuery": "query Progress($start:String!,$end:String!,$categoryName:String!){progress:timeRecordStats(where:{date:{_gte:$start,_lt:$end},startTime:{_eq:0},endTime:{_gte:1},category:{name:{_eq:$categoryName}}}){date{countDistinct}}}",
+  "progressQuery": "query Progress($start:String!,$end:String!,$categoryName:String!){progress:timeRecordStats(where:{date:{_gte:$start,_lt:$end},startMinute:{_eq:0},endMinute:{_gte:1},category:{name:{_eq:$categoryName}}}){date{countDistinct}}}",
   "progressVariables": "{\"categoryName\": \"休息\"}",
   "progressVariableBindings": "{\"start\": \"goal.startDate\", \"end\": \"goal.endDateExclusive\"}",
   "progressValuePath": "progress.date.countDistinct",

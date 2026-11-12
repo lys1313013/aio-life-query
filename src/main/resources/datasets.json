@@ -5,10 +5,10 @@
     "typeName": "TimeRecord",
     "root": "timeRecords",
     "statsRoot": "timeRecordStats",
-    "release": "time-record-v4",
+    "release": "time-record-v5",
     "role": "ai_time_reader",
     "scope": "time.read",
-    "description": "当前用户未删除的完整时迹；startTime/endTime 为当天分钟数，durationMinutes 为分钟；按天记录的零点片段不一定代表零点入睡",
+    "description": "当前用户未删除的完整时迹；startMinute/endMinute 为当天分钟数（闭区间），durationMinutes 为分钟；按天记录的零点片段不一定代表零点入睡",
     "rangeFields": [
       "date"
     ],
@@ -32,7 +32,7 @@
         "nullable": true
       },
       "durationMinutes": {
-        "column": "duration",
+        "column": "duration_minutes",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": false
@@ -43,14 +43,14 @@
         "sqlType": "BIGINT",
         "nullable": true
       },
-      "startTime": {
-        "column": "start_time",
+      "startMinute": {
+        "column": "start_minute",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": false
       },
-      "endTime": {
-        "column": "end_time",
+      "endMinute": {
+        "column": "end_minute",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": false
@@ -125,8 +125,8 @@
       "categoryId",
       "durationMinutes",
       "createUser",
-      "startTime",
-      "endTime",
+      "startMinute",
+      "endMinute",
       "title",
       "isManual",
       "createdAt",
@@ -592,13 +592,13 @@
         "nullable": true
       },
       "durationSeconds": {
-        "column": "duration",
+        "column": "duration_seconds",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": false
       },
       "watchedDurationSeconds": {
-        "column": "watched_duration",
+        "column": "watched_duration_seconds",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": false
@@ -804,7 +804,7 @@
         "nullable": false
       },
       "durationMinutes": {
-        "column": "duration",
+        "column": "duration_minutes",
         "kind": "INT",
         "sqlType": "INTEGER",
         "nullable": true

@@ -174,7 +174,7 @@ public class QueryCompiler {
                     bounded |= dataset.rangeFields().contains(fieldName);
                 } else if ("INT".equals(field.kind())) {
                     requireObject(comparison, Set.of("_eq", "_gte", "_lte"));
-                    int max = "time_record".equals(dataset.name()) && Set.of("startTime", "endTime", "durationMinutes").contains(fieldName)
+                    int max = "time_record".equals(dataset.name()) && Set.of("startMinute", "endMinute", "durationMinutes").contains(fieldName)
                             ? 1440 : Integer.MAX_VALUE;
                     comparison.elements().forEachRemaining(v -> integer(v, 0, max));
                 } else if ("DECIMAL".equals(field.kind())) {

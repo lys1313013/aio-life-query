@@ -3,7 +3,7 @@ CREATE ROLE aio_query_read LOGIN PASSWORD 'REPLACE_WITH_RANDOM_PASSWORD';
 GRANT USAGE ON SCHEMA public TO aio_query_read;
 ALTER ROLE aio_query_read SET default_transaction_read_only=on;
 ALTER ROLE aio_query_read SET statement_timeout='5s';
-GRANT SELECT (id, date, category_id, duration, create_user, start_time, end_time, title, description, is_manual, create_time, update_user, update_time, relate_id, relate_type, user_id, is_deleted)
+GRANT SELECT (id, date, category_id, duration_minutes, create_user, start_minute, end_minute, title, description, is_manual, create_time, update_user, update_time, relate_id, relate_type, user_id, is_deleted)
   ON public.time_record TO aio_query_read;
 GRANT SELECT (id, exercise_date, exercise_type_id, exercise_count, description, create_user, create_time, update_time, update_user, time_id, user_id, is_deleted)
   ON public.exercise_record TO aio_query_read;
@@ -11,9 +11,9 @@ GRANT SELECT (id, title, type, author, url, status, total_progress, current_prog
   ON public.read_record TO aio_query_read;
 GRANT SELECT (id, title, type, director, url, status, total_progress, current_progress, start_time, finish_time, rating, create_time, remark, update_time, create_user, update_user, file_id, user_id, is_deleted)
   ON public.movie TO aio_query_read;
-GRANT SELECT (id, title, url, bvid, owner_name, duration, watched_duration, episodes, current_episode, status, last_watched, create_time, cover, notes, aid, description, pages_info, create_user, update_user, update_time, cover_file_id, cover_state, cover_version, user_id, is_deleted)
+GRANT SELECT (id, title, url, bvid, owner_name, duration_seconds, watched_duration_seconds, episodes, current_episode, status, last_watched, create_time, cover, notes, aid, description, pages_info, create_user, update_user, update_time, cover_file_id, cover_state, cover_version, user_id, is_deleted)
   ON public.b_video TO aio_query_read;
-GRANT SELECT (id, performance_name, performer, performance_type, performance_date, city, venue, ticket_price, duration, rating, seat_info, review, purchase_platform, order_number, create_user, create_time, update_user, update_time, user_id, is_deleted)
+GRANT SELECT (id, performance_name, performer, performance_type, performance_date, city, venue, ticket_price, duration_minutes, rating, seat_info, review, purchase_platform, order_number, create_user, create_time, update_user, update_time, user_id, is_deleted)
   ON public.performance TO aio_query_read;
 GRANT SELECT (id, user_id, template_id, name, is_deleted)
   ON public.time_tracker_category TO aio_query_read;

@@ -13,7 +13,7 @@ final class QueryModelMetadata {
     private static final Map<String, String> LABELS = Map.ofEntries(
             Map.entry("id", "标识"), Map.entry("date", "记录日期"), Map.entry("title", "标题"),
             Map.entry("categoryId", "分类标识"), Map.entry("durationMinutes", "时长"),
-            Map.entry("startTime", "开始时间"), Map.entry("endTime", "结束时间"),
+            Map.entry("startTime", "开始时间"), Map.entry("endTime", "结束时间"), Map.entry("startMinute", "开始分钟"), Map.entry("endMinute", "结束分钟"),
             Map.entry("description", "描述"), Map.entry("isManual", "手动记录"),
             Map.entry("createdAt", "创建时间"), Map.entry("updatedAt", "更新时间"),
             Map.entry("createUser", "创建人"), Map.entry("updateUser", "更新人"),
@@ -62,8 +62,8 @@ final class QueryModelMetadata {
         });
         if ("STATUS".equals(field.kind())) info.put("values", List.of("not_started", "in_progress", "completed", "on_hold"));
         if ("ID".equals(field.kind())) info.put("description", "字符串标识符，保留精度，不转换为数字");
-        if ("time_record".equals(dataset) && Set.of("startTime", "endTime").contains(name)) {
-            info.put("label", "startTime".equals(name) ? "开始分钟" : "结束分钟");
+        if ("time_record".equals(dataset) && Set.of("startMinute", "endMinute").contains(name)) {
+            info.put("label", "startMinute".equals(name) ? "开始分钟" : "结束分钟");
             info.put("description", "当天分钟数，0=00:00，1439=23:59，闭区间端点");
             info.put("unit", "分钟");
         }
