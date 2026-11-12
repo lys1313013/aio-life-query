@@ -7,7 +7,7 @@
 ## 环境与范围
 
 - 当时 MCP 地址：`http://127.0.0.1:45680/mcp`，验收完成时保留了本地运行环境；本次文档核对未检查该环境是否仍运行。
-- 真实链路：Codex → MCP 网关 → AIO Life 鉴权 → Hasura → MySQL Connector → MySQL；使用专用测试 MySQL / Redis 容器。
+- 真实链路：Codex → MCP 网关 → AIO Life 鉴权 → Hasura → Connector → 数据库；使用专用测试数据库 / Redis 容器。
 - 使用真实 Sa-Token 登录会话、虚构 A/B 用户及记录，没有读取现有开发库或生产数据。A/B 用户 ID 为相邻大整数。
 - Codex 通过临时配置和环境变量注入 Bearer；未修改全局 MCP 配置。事件记录确认只调用 `aio-life-query` 工具，没有 shell 或文件操作。
 - 首期范围仍为 `time_record` 只读查询。此结果不扩展原验证记录中的生产发布范围。

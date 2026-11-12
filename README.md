@@ -203,7 +203,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 ### 按分类名称查询时迹
 
-时迹明细可选取 `category { id name }`，明细和汇总都支持 `where.category.id/name._eq`。示例见 [sleep-before-midnight.json](examples/sleep-before-midnight.json)，发送到 `/graphql`。其中 `startTime = 0` 只说明片段从零点开始，不能据此推断实际入睡时间。
+时迹明细可选取 `category { id name }`，明细和汇总都支持 `where.category.id/name._eq`。示例见 [sleep-before-midnight.json](examples/sleep-before-midnight.json)，发送到 `/graphql`。其中 `startMinute = 0` 只说明片段从零点开始，不能据此推断实际入睡时间。
 
 分类名称按当前用户覆盖后的有效名称匹配，同名分类均可匹配；公共分类保留公共 ID。停用分类保留历史元数据，删除、缺失或其他用户私有分类返回 `category: null`。关系来自 [relationships.json](src/main/resources/relationships.json) 和[固定派生 SQL](connector/time-record-category.sql)，无需创建数据库视图，没有独立公开根查询。
 

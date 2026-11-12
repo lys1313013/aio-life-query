@@ -9,7 +9,7 @@
 - 构建环境：Gradle 8.14.3 / JDK 21；运行协议 NDC 0.1.6。
 - 本仓库保存补丁与构建入口，源码及构建产物进入忽略的 `.cache/`。
 
-补丁从原 MySQL 模块派生 PostgreSQL 构建，使用 jOOQ OSS 3.19.8。禁用 mutation、explain 和请求级连接串；SQL 查询超时 5 秒；不自动生成多语句 SET；仅投影配置中的列；适配 PostgreSQL 数值、时间和 JSONB 映射。Connector 缺少服务密钥时拒绝访问，去掉请求正文日志，错误输出仅保留错误类别，避免 SQL 和数据进入日志。
+补丁从上游模块派生 PostgreSQL 构建，使用 jOOQ OSS 3.19.8。禁用 mutation、explain 和请求级连接串；SQL 查询超时 5 秒；不自动生成多语句 SET；仅投影配置中的列；适配 PostgreSQL 数值、时间和 JSONB 映射。Connector 缺少服务密钥时拒绝访问，去掉请求正文日志，错误输出仅保留错误类别，避免 SQL 和数据进入日志。
 
 `statement_timeout=5000` 和 `default_transaction_read_only=on` 通过 PostgreSQL 连接 options 初始化；使用专门的列级 SELECT 角色。OpenTelemetry 通过 `QUARKUS_OTEL_SDK_DISABLED=true` 在运行时关闭，见 [Quarkus 3.20 官方配置说明](https://quarkus.io/version/3.20/guides/opentelemetry/)。
 
