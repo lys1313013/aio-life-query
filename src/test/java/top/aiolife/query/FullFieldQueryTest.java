@@ -70,13 +70,13 @@ class FullFieldQueryTest {
 
     @Test void timeOfDayFiltersAreBoundedAndDoNotRequireReadingAllDetails() throws Exception {
         var compiler = new QueryCompiler(json);
-        var request = request("time_record", "startTime endTime title description", ",startTime:{_eq:0},endTime:{_lte:1440}");
-        assertEquals(0, compiler.compile(request).variables().at("/where/startTime/_eq").intValue());
-        assertThrows(QueryException.class, () -> compiler.compile(request("time_record", "id", ",startTime:{_eq:1441}")));
-        assertThrows(QueryException.class, () -> compiler.compile(request("time_record", "id", ",endTime:{_eq:-1}")));
+        var request = request("time_record", "startMinute endMinute title description", ",startMinute:{_eq:0},endMinute:{_lte:1440}");
+        assertEquals(0, compiler.compile(request).variables().at("/where/startMinute/_eq").intValue());
+        assertThrows(QueryException.class, () -> compiler.compile(request("time_record", "id", ",startMinute:{_eq:1441}")));
+        assertThrows(QueryException.class, () -> compiler.compile(request("time_record", "id", ",endMinute:{_eq:-1}")));
         var d = QueryDatasets.named("time_record");
         var stats = new QueryCompiler.Request(d.domain(), d.release(), d.release(), "Q",
-                "query Q { timeRecordStats(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},startTime:{_eq:0},categoryId:{_eq:\"1\"}}){count} }", null);
+                "query Q { timeRecordStats(where:{date:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},startMinute:{_eq:0},categoryId:{_eq:\"1\"}}){count} }", null);
         assertEquals("timeRecordStats", compiler.compile(stats).root());
         assertThrows(QueryException.class, () -> compiler.compile(new QueryCompiler.Request(d.domain(), "time-record-v1", "time-record-v1", "Q", stats.query(), null)));
     }

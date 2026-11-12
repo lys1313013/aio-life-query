@@ -26,7 +26,7 @@ class CategoryRelationshipTest {
         String query = json.readTree(Path.of("examples/sleep-before-midnight.json").toFile()).path("query").asText();
         var plan = compile(query);
         assertEquals("休息", plan.variables().at("/where/category/name/_eq").asText());
-        assertEquals(0, plan.variables().at("/where/startTime/_eq").asInt());
+        assertEquals(0, plan.variables().at("/where/startMinute/_eq").asInt());
         assertEquals(java.util.Map.of("id", "id", "name", "name"), plan.relationSelections().get("category"));
         assertTrue(compile("{timeRecordStats(where:{"+range+",category:{name:{_eq:\"休息\"}}}){count}}").query()
                 .contains("filter: {where: $where}"));
