@@ -2,7 +2,7 @@
 CREATE TABLE exercise_record (
  id BIGINT PRIMARY KEY, exercise_date DATE NOT NULL, exercise_type_id BIGINT,
  exercise_count INT NOT NULL, description TEXT, create_user BIGINT, create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
- update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_user BIGINT, time_id VARCHAR(64), user_id BIGINT NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
+ update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, update_user BIGINT, time_id BIGINT, user_id BIGINT NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
 );
 INSERT INTO exercise_record(id,exercise_date,exercise_type_id,exercise_count,user_id,is_deleted) VALUES
  (1,'2026-10-01',9007199254740993,26,101,0), (2,'2026-10-02',9007199254740993,20,101,0),

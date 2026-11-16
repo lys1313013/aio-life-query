@@ -1,0 +1,13 @@
+AIO Life Query runtime images
+
+Hasura engine: https://github.com/hasura/graphql-engine
+Official image release: ghcr.io/hasura/v3-engine:v2026.10.05
+Upstream source license: Apache-2.0; see hasura-engine.LICENSE.
+The engine executable and entrypoint are unchanged from the official image.
+
+PostgreSQL connector: https://github.com/hasura/ndc-postgres
+Official release: v3.1.0
+License: Apache-2.0; see ndc-postgres.LICENSE.
+The connector binary is unchanged; the image adds an AIO Life startup guard.
+
+Exact multi-platform image digests are recorded in deploy/upstreams.lock.json.

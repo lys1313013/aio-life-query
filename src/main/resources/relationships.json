@@ -14,7 +14,7 @@
         "recordId": {
           "column": "record_id",
           "kind": "ID",
-          "sqlType": "VARCHAR",
+          "sqlType": "BIGINT",
           "nullable": false
         },
         "userId": {

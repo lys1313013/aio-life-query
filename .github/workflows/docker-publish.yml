@@ -1,4 +1,4 @@
-name: Build and Push Docker Image
+name: Test and Publish Query Runtime
 
 on:
   pull_request:
@@ -102,12 +102,50 @@ jobs:
       - name: Verify startup, audit permissions and unauthenticated boundaries
         run: bash scripts/smoke_image.sh aio-life-query:ci
 
+  runtime-check:
+    name: Verify official runtime (${{ matrix.arch }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          java-version: '21'
+          distribution: temurin
+      - uses: actions/download-artifact@v6
+        with:
+          name: application-jar
+          path: target
+      - name: Build wrappers from pinned official releases
+        run: |
+          bash scripts/build_engine.sh
+          bash scripts/build_connector.sh
+      - name: Verify real Hasura / Connector / PostgreSQL query chain
+        run: python3 scripts/test_runtime_images.py
+      - name: Preserve isolated fixture evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-evidence-${{ matrix.arch }}
+          path: .cache/aio-query-runtime-*/
+          include-hidden-files: true
+          retention-days: 7
+
   build-and-push:
     name: Build and push amd64/arm64
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    needs: [test, image-check]
+    needs: [test, image-check, runtime-check]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -151,7 +189,6 @@ jobs:
           images: ${{ steps.targets.outputs.acr }}
           flavor: latest=false
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=sha-,format=long
@@ -172,9 +209,54 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=query-runtime
           cache-to: type=gha,scope=query-runtime,mode=min
+      - name: Build and push official Hasura wrapper
+        id: engine
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/engine.Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
+          tags: ${{ steps.targets.outputs.acr }}:hasura-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.title=aio-life-query-hasura
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Build and push official PostgreSQL Connector wrapper
+        id: connector
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/connector.Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          provenance: false
+          sbom: false
+          tags: ${{ steps.targets.outputs.acr }}:connector-sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.title=aio-life-query-postgresql-connector
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=query-connector
+          cache-to: type=gha,scope=query-connector,mode=min
+      - name: Advance main tags after all three images are published
+        if: github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.targets.outputs.acr }}
+          REVISION: ${{ github.sha }}
+        run: |
+          docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:sha-$REVISION"
+          docker buildx imagetools create --tag "$IMAGE:hasura-latest" "$IMAGE:hasura-sha-$REVISION"
+          docker buildx imagetools create --tag "$IMAGE:connector-latest" "$IMAGE:connector-sha-$REVISION"
       - name: Record immutable image reference
         env:
           IMAGE: ${{ steps.targets.outputs.acr }}
           DIGEST: ${{ steps.build.outputs.digest }}
+          ENGINE_DIGEST: ${{ steps.engine.outputs.digest }}
+          CONNECTOR_DIGEST: ${{ steps.connector.outputs.digest }}
         run: |
           printf 'Published gateway image: `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Published Hasura image: `%s@%s`\n' "$IMAGE" "$ENGINE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Published Connector image: `%s@%s`\n' "$IMAGE" "$CONNECTOR_DIGEST" >> "$GITHUB_STEP_SUMMARY"

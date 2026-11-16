@@ -1,6 +1,8 @@
-# 此文件覆盖根 .dockerignore；Connector 仅接收已编译的运行文件。
+# 仅发送已提交的启动检查与许可证，不接收本机编译产物、配置或凭据。
 **
-!.cache/
-!.cache/connector/
-!.cache/connector/quarkus-app/
-!.cache/connector/quarkus-app/**
+!deploy/
+!deploy/connector-entrypoint.rs
+!connector/
+!connector/licenses/
+!connector/licenses/ndc-postgres.LICENSE
+!connector/licenses/NOTICE

@@ -1,0 +1,18 @@
+{
+  "engine": {
+    "repository": "https://github.com/hasura/graphql-engine",
+    "version": "v2026.10.05",
+    "image": "ghcr.io/hasura/v3-engine@sha256:17ddce6b669cad105e02d6864ac327fca8efff3febbddf6476d38e2a4ce78238",
+    "license": "Apache-2.0",
+    "licenseSha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  "connector": {
+    "repository": "https://github.com/hasura/ndc-postgres",
+    "version": "v3.1.0",
+    "image": "ghcr.io/hasura/ndc-postgres@sha256:f91910ef5107aa80d31d82639e149b7f41f4a5bb3af9a369397d7d5965d79a57",
+    "ndcVersion": "0.2.4",
+    "license": "Apache-2.0",
+    "licenseSha256": "b02a0faf7c466db1e998639f6a26f60b2ed34d04c1ea87f9d568502b2e497b86",
+    "revision": "5ea4370a7ed4bb68a0136bf73447b0c92c0db5cc"
+  }
+}

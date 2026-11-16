@@ -1,38 +1,18 @@
-# Connector 来源与修改范围
+# Query 运行镜像来源
 
-文档核对日期：2026-11-10。按本仓库固定构建脚本、补丁、关系 SQL 与元数据生成器核对；不表示重新核验了上游最新版本或许可。
+当前部署使用官方发行镜像，固定多架构 digest 见 [upstreams.lock.json](../deploy/upstreams.lock.json)。
 
-仓库：[hasura/ndc-jvm-mono](https://github.com/hasura/ndc-jvm-mono)。
+| 组件 | 官方来源 | 固定版本 |
+| --- | --- | --- |
+| Hasura v3 | [hasura/graphql-engine](https://github.com/hasura/graphql-engine)、`ghcr.io/hasura/v3-engine` | `v2026.10.05` |
+| PostgreSQL Connector | [hasura/ndc-postgres](https://github.com/hasura/ndc-postgres)、`ghcr.io/hasura/ndc-postgres` | `v3.1.0`，NDC `0.2.4` |
 
-- Commit：`7ea80f966e7abfeaba56957291ff555649e21809`
-- 源码归档 SHA-256：`969590bc77db018cf9d5d51be28612d37445c96a9016405e4a2e5ae5ada5de46`
-- 构建环境：Gradle 8.14.3 / JDK 21；运行协议 NDC 0.1.6。
-- 本仓库保存补丁与构建入口，源码及构建产物进入忽略的 `.cache/`。
+Hasura 与 Connector 的上游源码许可证为 Apache-2.0，副本和说明保存在 [licenses/](licenses/)。Hasura 包装镜像添加来源说明并以 UID 10001 运行，保持官方二进制及入口不变；入口 `ddn-engine-local-dev` 也是官方发布镜像的入口，不能单凭名称认定不适用于自托管。官方部署说明见 [Self-hosted](https://hasura.io/docs/3.0/deployment/self-hosted/)。
 
-补丁从上游模块派生 PostgreSQL 构建，使用 jOOQ OSS 3.19.8。禁用 mutation、explain 和请求级连接串；SQL 查询超时 5 秒；不自动生成多语句 SET；仅投影配置中的列；适配 PostgreSQL 数值、时间和 JSONB 映射。Connector 缺少服务密钥时拒绝访问，去掉请求正文日志，错误输出仅保留错误类别，避免 SQL 和数据进入日志。
+Connector 包装镜像增加一个 Rust 启动检查器，要求至少 32 字符的 `HASURA_SERVICE_TOKEN_SECRET` 及非空 `CONNECTION_URI`，再 `exec` 官方程序。配置使用官方 version 5 格式：显式表列白名单、固定无参数 native queries、`mutationsVersion: null`，没有动态连接串配置。Hasura 启用 `json_session_variables`，保留 Webhook 中的字符串 ID；聚合映射到 `pg_catalog.sum`，保持空集返回 null 的既有 API 契约。只读账号设置 `default_transaction_read_only=on`、`statement_timeout=5000`，仅拥有白名单列 SELECT。官方 Connector 的 explain 等内部能力不作为公网接口。
 
-`statement_timeout=5000` 和 `default_transaction_read_only=on` 通过 PostgreSQL 连接 options 初始化；使用专门的列级 SELECT 角色。OpenTelemetry 通过 `QUARKUS_OTEL_SDK_DISABLED=true` 在运行时关闭，见 [Quarkus 3.20 官方配置说明](https://quarkus.io/version/3.20/guides/opentelemetry/)。
+原 `ndc-jvm-mono` 派生实现和补丁已退出当前构建及部署，不再依赖缓存 Quarkus 产物。数据库连接使用标准 `postgresql://` URI，无 JDBC 部署参数。
 
-分类关系扩展：仅允许受控配置中无参数的静态原生查询，将其内联为派生表，覆盖关系取数、过滤和排序的表引用；不接受客户端 SQL。原生查询统一通过派生表引用。投影同时按静态查询显式列白名单校验。`time-record-category.sql` 合并公共分类与当前用户的名称覆盖，派生集合没有独立公开查询入口。
+业务派生 SQL 由本仓库维护：`time-record-category.sql` 合并当前用户的有效分类名称；`income-month.sql` 按用户、类型、自然月汇总；`exercise-record-type.sql` 与 `income-month-type.sql` 解析有效字典标签。定义来自 [relationships.json](../src/main/resources/relationships.json) 和 [datasets.json](../src/main/resources/datasets.json)，不扫描全库、不接收客户端 SQL、不创建数据库视图或外键。公共只读类型不接受个人覆盖，停用类型保留历史含义，删除、错误域及他人私有项不暴露。
 
-关系定义来自 [`relationships.json`](../src/main/resources/relationships.json)，派生 SQL 为 [`time-record-category.sql`](time-record-category.sql)。通过时迹 ID 关联，每条时迹最多一个分类；只公开 `id`、`name`，内部 `recordId` 用于 Hasura 映射，`userId` 用于行过滤。公共分类保留公共 ID，名称优先取当前用户未删除、ID 最大的覆盖；停用分类仍用于历史记录，删除、缺失或其他用户私有分类不返回。名称精确筛选可匹配多个同名分类。
-
-六个物理主数据集的 109 个物理字段来自 [`datasets.json`](../src/main/resources/datasets.json)，由元数据生成器显式投影；不扫描或公开全库。分类额外需要 `time_tracker_category` 的 `id`、`user_id`、`template_id`、`name`、`is_deleted` 五列 SELECT，完整授权见 [`readonly-account.sql.example`](../deploy/readonly-account.sql.example)。
-
-## 构建与验证
-
-在本仓库根目录执行 `bash scripts/build_connector.sh`，输出为 `.cache/connector/quarkus-app/`。脚本校验归档 SHA-256，并记录补丁 SHA-256；已有源码缓存与当前补丁不一致时直接失败，需先移走 `.cache/postgresql-connector-source` 再重建。构建使用 `-x test`，成功只表示打包完成。
-
-准备网关 JAR 后执行 `python3 scripts/test_category_relationship.py`，验证实际 GraphQL → Hasura → Connector → PostgreSQL 关系查询，授权服务使用本地桩；完整 AIO Life 授权链使用 `bash scripts/test_e2e.sh`。PostgreSQL 版本要求见 [README](../README.md#按分类名称查询时迹)。脚本存在不代表本轮已执行，历史结果及未覆盖条件见 [验证记录](../docs/验证记录.md)。
-
-## 授权与引擎边界
-
-**授权核验边界：**此前核验所选 commit 的归档未包含许可证文件，当时 GitHub 仓库 API 的 `license` 返回 null；本次未重新查询上游。改用 jOOQ OSS 只解决该依赖的版本选择，不能据此认定整个 Connector 已获生产使用或再分发许可。当前用于本地验证；生产发布前需明确上游 Connector 的授权，或替换为授权明确、通过同一协议与权限验收的实现。不要将它标注为已经验证的完整免费开源发行版。
-
-Hasura 测试镜像是固定 digest 的 `ddn-engine-local-dev`；生产源码引擎需要另行构建与同等验收，详见 [README](../README.md#独立部署)。GitHub Actions 仅发布 Java 网关，不构建或发布本 Connector 和 Hasura 引擎，详见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。
-
-月收入派生模型来自 [`income-month.sql`](income-month.sql)，按用户、收入类型、自然月分组后公开最大值等受控聚合。需要 `income` 的 `user_id/inc_type_id/inc_date/amt/is_deleted` 列级 SELECT；不修改 Connector 补丁，不接收客户端 SQL。数值聚合扩展为 `sum/max/min`，时迹日期支持 `countDistinct`。许可和生产引擎边界仍按上文执行。
-
-运动与收入类型名称关联（2026-11-11）：[`exercise-record-type.sql`](exercise-record-type.sql) 和 [`income-month-type.sql`](income-month-type.sql) 通过记录所属用户关联 `user_dict_data`，限定 `exercise_type` / `income_type` 字典域及未删除的基础项。公共只读标签不应用覆盖，其他公共类型使用当前用户最新未删除覆盖；停用项仍服务历史查询。每条运动记录、每个月收入分组至多关联一个类型，角色权限继续限定记录用户。月收入复合 ID 与原派生模型完全一致，不改变金额聚合口径。新增关系仅需更新元数据与列级只读授权，不修改 Connector 补丁。
-
-2026-11-16 部署结构对齐：物理活动模型使用 `event_record`，活动时间字段为 TIMESTAMP；阅读和影视移除旧 `file_id` 授权与投影。此调整不修改 Connector 补丁，需重新生成元数据并部署匹配的网关。
+CI 在 amd64/arm64 原生运行镜像验收后，发布三个 ACR 标签系列。验收包含全部七个数据集、字段和大整数、用户/软删除隔离、分类与类型关系、金额和聚合、认证拒绝、只读权限和数据库时限。隔离授权桩不是生产用户授权验收。入口及发布配置见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。

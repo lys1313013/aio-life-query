@@ -1,109 +1,64 @@
-# Docker 打包与 GitHub Actions
+# Docker 与 GitHub Actions
 
-文档核对日期：2026-11-16。当前工作流仅发布阿里云 ACR；本次修改未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
+## 发布对象
 
-沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为提供 REST / GraphQL HTTP / MCP 的自有 Java 网关 `aio-life-query`；Hasura 和 PostgreSQL Connector 保持独立镜像与配置，不能混入网关镜像。
+`.github/workflows/docker-publish.yml` 在全部检查成功后，将三个独立运行镜像发布到同一 ACR 仓库 `<registry>/<namespace>/aio-life-query`。部署主机只拉取镜像，不编译、导入本机镜像或修改容器内容。
 
-## Docker 文件
+| 组件 | `main` 浮动标签 | 每次发布的固定标签 |
+| --- | --- | --- |
+| Java Query 网关 | `latest` | `sha-<完整 commit SHA>` |
+| 官方 Hasura v3 包装镜像 | `hasura-latest` | `hasura-sha-<完整 commit SHA>` |
+| 官方 PostgreSQL Connector 包装镜像 | `connector-latest` | `connector-sha-<完整 commit SHA>` |
 
-| 文件 | 用途 |
-|---|---|
-| `Dockerfile` | 本地从源码构建，编译使用构建机原生平台与 Maven 缓存；打包跳过测试，需另行验证 |
-| `Dockerfile.runtime` | CI 打包已通过测试的 JAR，避免为每个架构重新编译 |
-| `.dockerignore` | 网关构建上下文只包含 `pom.xml` 和 `src` |
-| `deploy/connector.Dockerfile.dockerignore` | Connector 构建上下文只包含已编译 Quarkus 运行文件 |
-| `scripts/prepare_image_context.sh` | 创建仅含 `app.jar` 和 Dockerfile 的新上下文，要求来源目录只有一个 JAR |
-| `scripts/smoke_image.sh` | 检查容器启动、认证、故障拒绝、非 root、审计目录及 Java PID 1 |
+Hasura 和 Connector 的上游版本、固定多架构 digest、许可证见 [上游说明](../connector/UPSTREAM.md)。Hasura 保持官方二进制和入口，Connector 只增加缺少认证配置时拒绝启动的检查器。两者以 UID 10001 运行；生成的配置目录需允许 `AIO_QUERY_CONFIG_GID` 读取。业务配置和密钥不进入镜像。
 
-运行镜像使用 Java 21 JRE Alpine、Asia/Shanghai 时区、`10001:10001` 用户与组。审计目录为 `/app/audit`，挂载目录必须允许该 UID 写入。`JAVA_OPTS` 默认 `-Xms128m -Xmx512m -XX:+UseG1GC`，可由部署环境覆盖。入口使用 `exec java`，容器停止信号直接传递给 JVM。
+生产整套更新优先填写同一 commit 的三个固定标签或 CI 摘要中的 digest。浮动标签仅在三种镜像均推送成功后更新，标签更新并非跨镜像事务。版本标签 `v*` 另外发布网关 SemVer 标签，不移动三个 `latest` 标签。
 
-本地源码构建：
+## CI 检查
+
+PR、`main` 推送、`v*` 标签和手动运行都会检查；仅 `main` 或 `v*` 在非 PR 事件发布。
+
+1. Java 21 `mvn verify`，使用隔离 Redis；要求存在测试报告且没有失败、错误或跳过项。运行 Python 元数据和文件权限测试，保存通过测试的 JAR。
+2. 构建网关运行镜像，检查启动、审计权限、认证拒绝、Java PID 1 和非 root 用户。
+3. 在原生 amd64、arm64 runner 上，从固定官方上游构建两个包装镜像，运行 `scripts/test_runtime_images.py`，验证七个数据集的完整 SQL 链、隔离、关系、金额、聚合、只读权限、数据库时限及缺少密钥拒绝启动。
+4. 全部成功后，Buildx 发布三个 amd64/arm64 镜像；CI 摘要记录不可变 digest。CI 不通过 SSH 更新服务器，不替代真实用户授权和生产环境验收。
+
+测试 JAR 保留 1 天，测试报告及隔离运行日志保留 7 天。测试 PostgreSQL 和 Redis 为虚构数据夹具；生产 Compose 不创建 Redis。
+
+## ACR 配置
+
+独立 Query 仓库需要四项 Actions Secrets：`ALIYUN_ACR_REGISTRY`、`ALIYUN_ACR_NAMESPACE`、`ALIYUN_ACR_USERNAME`、`ALIYUN_ACR_PASSWORD`。缺少任何一项时发布失败。复用现有 `aio-life-query` 仓库的不同组件标签，无需部署主机拥有推送凭据。
+
+为兼容现有 ACR，发布使用 `provenance: false` 与 `sbom: false`。私有仓库拉取前，部署主机须登录具备读取权限的账号。
+
+## 部署
+
+推荐使用主仓库 `docker-compose-query.yml`，仅启动 `aio-life-query`、`hasura`、`postgresql-connector`，复用后端、PostgreSQL 和 Redis。独立使用本仓库时也可选 `deploy/compose.yml`，两份编排不能同时运行同名项目。
+
+注入服务密钥、`AIO_QUERY_DATABASE_URL=postgresql://...`、已有 Redis 和配置组 ID。URI 中用户名/密码的特殊字符需 URL 编码。数据库使用专门的列级 SELECT 账号，设置只读和 5 秒时限，见 [readonly-account.sql.example](../deploy/readonly-account.sql.example)。不再使用 `AIO_QUERY_JDBC_URL`。
+
+独立仓库启动示例：
 
 ```bash
-docker build -t aio-life-query:local .
-bash scripts/smoke_image.sh aio-life-query:local
+export AIO_QUERY_CONFIG_GID="$(id -g)"
+python3 scripts/build_metadata.py
+docker compose -f deploy/compose.yml pull
+docker compose -f deploy/compose.yml up -d --no-build
 ```
 
-复用已测试的 JAR 构建：
+元数据生成器不会自动读取 `.env`，独立运行前需安全注入 Webhook 和 Connector 密钥。目录 `0750`、文件 `0640`，包含密钥，不能提交。字段、关系或内部密钥变化需重新生成配置并更新匹配的服务。仅网关端口绑定宿主回环地址；Hasura、Connector、管理端点及授权 Webhook 不作为公网入口。
+
+在主仓库部署时，`python3 scripts/update-query-stack.py` 会检查源码与三个镜像的 commit 一致、备份并生成元数据、重建三个服务并等待健康检查。只更新网关使用 `./scripts/update-query.sh`，不执行 `down`，不更新另外两个组件。Web 直接使用其 CI 发布镜像内的 Nginx 配置，不通过 `docker cp` 或代码绑定覆盖。
+
+## 本地验证
 
 ```bash
-# Redis 测试需要 127.0.0.1 上的隔离无密码实例，将 16379 替换为其端口。
-AIO_QUERY_TEST_REDIS_PORT=16379 mvn -B -ntp verify -DfailIfNoTests=true
+# 先使用隔离 Redis 完成 mvn verify，生成已测试 JAR。
+AIO_QUERY_TEST_REDIS_PORT=<port> mvn -B -ntp verify -DfailIfNoTests=true
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
-bash scripts/prepare_image_context.sh .cache/image-context
-docker build -t aio-life-query:local .cache/image-context
-bash scripts/smoke_image.sh aio-life-query:local
+bash scripts/build_engine.sh
+bash scripts/build_connector.sh
+python3 scripts/test_runtime_images.py
 ```
 
-上下文目录要求为空；重复构建时使用新的目录。不要将整个 `.cache/`、`.env` 或审计数据作为镜像内容。
-
-## 工作流
-
-入口为 `.github/workflows/docker-publish.yml`。
-
-| 触发 | 行为 |
-|---|---|
-| PR → `main` | JDK 21 测试、真实 Redis、生成 JAR、构建运行镜像并执行冒烟检查；不登录仓库、不推送镜像 |
-| push → `main` | 上述检查成功后，发布 amd64/arm64 镜像 |
-| push → `v*` 标签 | 上述检查成功后发布；版本标签使用 `v0.1.0` 等 SemVer 格式 |
-| 手动运行 | 所选 ref 完成检查；只有 `main` 或 `v*` 标签执行发布 |
-
-工作流使用三个任务：`test` → `image-check` → `build-and-push`。测试任务包含 Java 测试及 Python 元数据文件权限、原子替换、失败恢复、六数据集字段授权和分类关系权限测试；发现失败、缺少 Java 报告或 Java 跳过项时阻止发布。测试 JAR 作为 artifact 保存 1 天，Surefire 报告保存 7 天。镜像检查在 GitHub runner 的原生 amd64 架构运行；发布阶段使用 QEMU / Buildx 构建 amd64 和 arm64，工作流没有逐架构运行冒烟检查。
-
-此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 PostgreSQL 的完整隔离验收使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
-
-镜像仅发布至阿里云 ACR：`<registry>/<namespace>/aio-life-query`，其中 registry 和 namespace 来自下方 Secrets。工作流不登录或推送 GHCR，也不申请 `packages: write` 权限。
-
-镜像标签：
-
-- `main`：`latest`、`sha-<完整 commit SHA>`。
-- `v0.1.0`：`0.1.0`、`0.1`、`sha-<完整 commit SHA>`。版本发布不移动 `latest`。
-- 发布摘要记录 `<registry>/<namespace>/aio-life-query@sha256:...`，生产部署优先使用此不可变引用。
-
-实现使用与配套服务一致的 Docker Actions 主版本，以及显式文件上下文。相关行为见 [Docker Build Action](https://github.com/docker/build-push-action/tree/v6) 与 [Docker Metadata Action](https://github.com/docker/metadata-action/tree/v5)。
-
-## 阿里云 ACR
-
-在独立 `aio-life-query` GitHub 仓库 Settings → Secrets and variables → Actions 中配置以下四项 Secrets，名称与 `aio-life-server` 相同：
-
-| Secret | 用途 |
-|---|---|
-| `ALIYUN_ACR_REGISTRY` | ACR 域名，不含 `https://` |
-| `ALIYUN_ACR_NAMESPACE` | 命名空间 |
-| `ALIYUN_ACR_USERNAME` | 登录用户名 |
-| `ALIYUN_ACR_PASSWORD` | 登录密码 |
-
-四项必须全部配置；全部缺失或仅配置部分时，发布任务在登录和构建前明确失败。完整配置后仅发布 `<registry>/<namespace>/aio-life-query`。为兼容 ACR，沿用配套服务的 `provenance: false` 与 `sbom: false` 设置。
-
-拉取私有 ACR 镜像前，使用具备读取权限的账号登录对应 registry。仓库 Secrets 不会从相邻 `aio-life-server` 自动继承，可使用组织 Secrets 授予新仓库访问。
-
-## Compose 使用发布镜像
-
-`deploy/compose.yml` 同时支持本地构建与运行已有镜像：
-
-- `AIO_QUERY_GATEWAY_IMAGE`：默认 `aio-life-query:local`，可指定 ACR 的标签或 digest。
-- `AIO_QUERY_CONNECTOR_IMAGE`：默认 `aio-life-query-postgresql-connector:local`，可指定独立维护并验收的 Connector 镜像。
-- `AIO_QUERY_ENGINE_IMAGE`：必须显式指定已验证的引擎镜像，原有要求保持不变。
-
-部署主机先注入服务密钥、只读 JDBC、Redis 配置和 `AIO_QUERY_CONFIG_GID`，并生成受保护元数据；完整变量见 [README](../README.md#运行环境变量)。Connector/Hasura 需要预先准备，网关替换示例（在本仓库根目录执行）：
-
-```bash
-export AIO_QUERY_GATEWAY_IMAGE='<registry>/<namespace>/aio-life-query@sha256:<digest>'
-docker compose -f deploy/compose.yml pull aio-life-query
-docker compose -f deploy/compose.yml up -d --no-build aio-life-query
-```
-
-启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时，先执行 `bash scripts/build_connector.sh` 准备 PostgreSQL Connector 编译产物，再执行 `docker compose -f deploy/compose.yml build aio-life-query postgresql-connector`。Hasura 引擎镜像需单独准备，可使用 `bash scripts/build_engine.sh` 构建，并在目标环境验收后设置 `AIO_QUERY_ENGINE_IMAGE`。GitHub Actions 只构建及推送网关镜像，没有 SSH 部署或自动修改生产服务。
-
-### 升级字段和分类关系
-
-当前数据集、发布版本与关系以 `src/main/resources/datasets.json`、`src/main/resources/relationships.json` 和 [README](../README.md#当前数据集) 为准。升级时按以下顺序准备：
-
-1. 核对 PostgreSQL 18+ 目标表结构，按 `deploy/readonly-account.sql.example` 更新现有账号的列级 GRANT，包含分类表 `time_tracker_category`、月收入源表 `income` 和类型字典表 `user_dict_data` 的所需列；已有账号不重复执行 `CREATE ROLE`。
-2. 使用当前 `connector/postgresql-readonly.patch`，执行 `bash scripts/build_connector.sh` 重新构建 Connector。脚本若报告补丁指纹变化，先移走 `.cache/postgresql-connector-source` 后再构建；复用旧运行目录不会自动应用新补丁。
-3. 使用当前配置执行 `python3 scripts/build_metadata.py`。默认输出为 `.cache/hasura/`，Compose 从此处读取；目录 `0750`、文件 `0640`，容器附加组必须有读取权限。每个文件独立原子替换，整个配置包不是一次事务；生成失败后修复并完整重跑，再重启相关服务。
-4. 部署匹配的 Connector、Hasura 元数据和网关镜像，并重新验证实际查询；REST / MCP 客户端重新读取目录版本。仅替换网关镜像不能完成本次字段及关系升级。
-
-Compose 只将网关 `45680` 绑定宿主回环地址。由 HTTPS 代理转发 `/api/v1/`、`/graphql` 和 `/mcp`，不公开 `/internal/hasura/auth`、管理端点、Redis、Hasura 或 Connector。
-
-当前独立仓库已配置 `origin=git@github.com:lys1313013/aio-life-query.git`。符合上述事件条件的推送才会触发工作流；2026-11-16 已配置并核对上述四项仓库 Actions Secrets，尚未验证 ACR 登录或镜像推送。实际发布结果以对应 GitHub Actions 运行和 ACR 中的镜像为准。Hasura 生产源码镜像与 Connector 授权边界见 [README](../README.md#固定的上游来源)。
+`deploy/engine.Dockerfile` 只继承固定的官方发行镜像并添加来源文件，不进行源码编译。Connector 构建上下文仅包含启动检查器与许可证，不包含 `.cache`、数据库配置或密钥。网关 CI 使用已测试 JAR 的最小上下文，见 `scripts/prepare_image_context.sh`、`Dockerfile.runtime`。

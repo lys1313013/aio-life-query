@@ -13,9 +13,9 @@ AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Has
 
 ## 环境与启动
 
-以下命令均在本仓库根目录执行。网关开发需要 JDK 21、Maven；元数据生成需要 Python 3；容器部署和隔离端到端验证需要 Docker Compose。Connector 构建使用 JDK 21 / Gradle 8.14.3，默认使用固定上游的 Gradle Wrapper。
+以下命令均在本仓库根目录执行。网关开发需要 JDK 21、Maven；元数据生成需要 Python 3；容器部署和隔离端到端验证需要 Docker Compose。Hasura 与 Connector 使用固定 digest 的官方发行镜像，不在部署主机编译。
 
-完整查询链依赖可用的 AIO Life 后端、专用 Redis、Hasura 和 PostgreSQL Connector。单独启动 Java 网关不会启动这些依赖，也不会初始化业务数据库。
+完整查询链依赖可用的 AIO Life 后端、现有 Redis、Hasura 和 PostgreSQL Connector。单独启动 Java 网关不会启动这些依赖，也不会初始化业务数据库。
 
 ### 运行环境变量
 
@@ -27,17 +27,17 @@ AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Has
 | `AIO_QUERY_HASURA_URL` | `http://127.0.0.1:45682/graphql`；Compose 使用容器内地址 |
 | `AIO_QUERY_SERVICE_KEY` | 必填，至少 32 字符，与后端 `AIO_LIFE_QUERY_ACCESS_SERVICE_KEY` 相同 |
 | `AIO_QUERY_WEBHOOK_KEY` | 必填，至少 32 字符，供 Hasura 认证 Webhook 使用，与服务密钥分开设置 |
-| `AIO_QUERY_REDIS_HOST` / `AIO_QUERY_REDIS_PORT` / `AIO_QUERY_REDIS_PASSWORD` | `127.0.0.1` / `6379` / 空；Compose 使用内部 Redis 且要求密码 |
+| `AIO_QUERY_REDIS_HOST` / `AIO_QUERY_REDIS_PORT` / `AIO_QUERY_REDIS_PASSWORD` | `127.0.0.1` / `6379` / 空；Compose 连接已有 Redis |
 | `AIO_QUERY_AUDIT_DIRECTORY` | 本机 `./artifacts/audit`；镜像 `/app/audit`，运行用户必须可写 |
 | `AIO_QUERY_MCP_ALLOWED_ORIGINS` | 空；需要浏览器 MCP 接入时填写逗号分隔的精确可信 Origin |
 | `AIO_QUERY_CONNECTOR_KEY` | 元数据生成和 Connector 部署必填，至少 32 字符，使用独立密钥 |
 | `AIO_QUERY_CONNECTOR_URL` / `AIO_QUERY_AUTH_WEBHOOK_URL` | 元数据生成默认 `http://postgresql-connector:8080` / `http://aio-life-query:45680/internal/hasura/auth` |
-| `AIO_QUERY_JDBC_URL` | Compose 必填，含只读账号的 JDBC URL，由 Connector 使用 |
+| `AIO_QUERY_DATABASE_URL` | Compose 必填，含只读账号的标准 PostgreSQL URI，由 Connector 使用 |
 | `AIO_QUERY_CONFIG_GID` | Compose 必填，容器读取生成元数据所需的附加组 ID |
-| `AIO_QUERY_ENGINE_IMAGE` | Compose 必填，经过目标环境验证的引擎镜像，部署时使用不可变 digest |
-| `AIO_QUERY_GATEWAY_IMAGE` / `AIO_QUERY_CONNECTOR_IMAGE` | Compose 默认 `aio-life-query:local` / `aio-life-query-postgresql-connector:local` |
+| `AIO_QUERY_ENGINE_IMAGE` | 默认 ACR `aio-life-query:hasura-latest`，生产优先填写同一发布的 digest |
+| `AIO_QUERY_GATEWAY_IMAGE` / `AIO_QUERY_CONNECTOR_IMAGE` | 默认 ACR `aio-life-query:latest` / `aio-life-query:connector-latest` |
 
-配置默认值见 [application.yml](src/main/resources/application.yml)，Compose 注入项见 [deploy/compose.yml](deploy/compose.yml)。本机直接运行 Maven 不自动加载 `.env`；通过终端或 IDE 注入环境变量。配置文件、JDBC 凭据、Token 和生成的密钥文件均不得提交。
+配置默认值见 [application.yml](src/main/resources/application.yml)，Compose 注入项见 [deploy/compose.yml](deploy/compose.yml)。本机直接运行 Maven 不自动加载 `.env`；通过终端或 IDE 注入环境变量。配置文件、数据库凭据、Token 和生成的密钥文件均不得提交。
 
 ### 本机运行网关
 
@@ -52,17 +52,17 @@ mvn spring-boot:run
 ### 独立部署
 
 1. 按 [readonly-account.sql.example](deploy/readonly-account.sql.example) 创建列级 SELECT 账号，核对目标库的字段、类型、记录归属和索引。网关不迁移业务表；所需结构变更由后端增量迁移维护。
-2. 配置后端查询授权开关及服务密钥，注入网关、Webhook、Connector、Redis、只读 JDBC 和镜像变量。容器中的 `AIO_QUERY_ACCESS_URL` 必须能访问业务后端，不能直接套用宿主机的 `127.0.0.1` 地址。
-3. 生成元数据，并在本地构建 Connector 后启动 Compose：
+2. 配置后端查询授权开关及服务密钥，注入网关、Webhook、Connector、Redis、只读 PostgreSQL URI 和镜像变量。容器中的 `AIO_QUERY_ACCESS_URL` 必须能访问业务后端，不能直接套用宿主机的 `127.0.0.1` 地址。
+3. 注入上述环境变量，生成元数据，再拉取 CI 发布的镜像启动：
 
    ```bash
    export AIO_QUERY_CONFIG_GID="$(id -g)"
    python3 scripts/build_metadata.py
-   bash scripts/build_connector.sh
-   docker compose -f deploy/compose.yml up -d --build
+   docker compose -f deploy/compose.yml pull
+   docker compose -f deploy/compose.yml up -d --no-build
    ```
 
-   使用已准备的网关、Connector 发布镜像时，设置对应镜像变量，按[镜像部署说明](docs/Docker与GitHubActions.md)拉取后执行 `docker compose -f deploy/compose.yml up -d --no-build`。Hasura 镜像需另行准备，Compose 不自动构建引擎。
+   三种镜像均由 CI 发布到同一 ACR 仓库，使用不同标签；版本与 digest 见 CI 摘要。见[镜像部署说明](docs/Docker与GitHubActions.md)。
 4. 通过 HTTPS 代理仅发布 `/api/v1/`、`/graphql` 和 `/mcp`。Compose 只将网关 `45680` 绑定到宿主回环地址，Hasura、Connector、Redis 不发布宿主端口；后端内部授权接口仅允许网关网络访问。跨主机内部通信和生产 PostgreSQL 连接需配置 TLS。
 
 元数据输出到 `.cache/hasura/`，包含内部密钥，目录权限为 `0750`、文件为 `0640`。附加组应只包含可信部署账号；生成器逐文件原子替换，失败后应完整重跑再重启服务。字段、关系、版本或密钥变化时，必须重新生成并部署相互匹配的网关、元数据和 Connector 配置。
@@ -92,9 +92,9 @@ sequenceDiagram
 ```
 
 - REST、GraphQL 和 MCP 的身份仅来自 `Authorization: Bearer ...`。用户使用现有登录 Token 或 API Key，不能通过参数、角色或 `X-Hasura-*` 请求头指定身份。
-- 网关实时调用 `POST /api/internal/query/access/check-token`，不解析 JWT、不缓存认证结果、不共享后端 Redis。后端同时检查 `/mcp/tools` 及数据集对应业务的二级锁；无权限的数据集不出现在目录中，直接描述或执行也会拒绝。
-- 执行票据存入专用 Redis，绑定用户、数据集和发布版本，有效期最多 30 秒且不超过原凭据有效期，原子消费一次。Webhook 和返回结果前不再远程鉴权；退出、撤销凭据或重新锁定阻止后续请求，已经获准的在途查询可以完成。
-- 明细和汇总都受 `user_id = 当前用户 AND is_deleted = 0` 约束。查询中的 `userId`、`isDeleted` 只是与行权限取交集的筛选条件。PostgreSQL 账号仅允许白名单列 SELECT，Connector 禁用 mutation、explain 和请求级连接地址覆盖。
+- 网关实时调用 `POST /api/internal/query/access/check-token`，不解析 JWT、不缓存认证结果、不读取后端 Redis 登录会话。后端同时检查 `/mcp/tools` 及数据集对应业务的二级锁；无权限的数据集不出现在目录中，直接描述或执行也会拒绝。
+- 执行票据存入现有 Redis，绑定用户、数据集和发布版本，有效期最多 30 秒且不超过原凭据有效期，原子消费一次。Webhook 和返回结果前不再远程鉴权；退出、撤销凭据或重新锁定阻止后续请求，已经获准的在途查询可以完成。
+- 明细和汇总都受 `user_id = 当前用户 AND is_deleted = 0` 约束。查询中的 `userId`、`isDeleted` 只是与行权限取交集的筛选条件。PostgreSQL 账号仅允许白名单列 SELECT，Connector 不生成写入 procedures，不接受请求级连接地址覆盖；网关不开放 mutation 或 explain。
 - 没有结果缓存；依赖、结果校验或审计失败时拒绝返回成功，不返回 Hasura 部分数据。内部接口和基础设施不能作为公网查询入口。
 
 ## 对外接口
@@ -197,11 +197,11 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 排序项 | 最多 3 项，每项 1 个字段；关系字段不支持排序 |
 | 并发 / 频率 | 每用户 2、全局 10 / 每用户每分钟 30 次 |
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
-| JDBC / PostgreSQL 执行时限 | 5 秒 / `statement_timeout=5000` |
+| PostgreSQL 执行时限 | 只读账号 `statement_timeout=5000`，5 秒 |
 
 所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和活动时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
-没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由 JDBC 和数据库时限约束。
+没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由数据库时限约束。
 
 ### 按分类名称查询时迹
 
@@ -225,7 +225,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 按改动范围选择检查；纯文档修改检查差异和引用即可。
 
-当前 `scripts/test_e2e.sh` 的测试库初始化只执行后端全量基线，尚未纳入 `2026-10-28_02_unify_common_fields.sql`。配合当前后端运行前，需先将脚本初始化与[后端数据库说明](https://github.com/lys1313013/aio-life-server/blob/main/docs/数据库初始化与验证.md)对齐；历史端到端结果不能视为当前组合已通过。
+发行镜像验收使用隔离 PostgreSQL 18、Redis 和虚构用户，Redis 仅为测试夹具，不新增生产 Redis。真实业务授权链使用相邻后端的 Flyway 迁移及测试。
 
 ```bash
 # Java 检查；未配置测试 Redis 时跳过 Redis 集成测试
@@ -234,16 +234,20 @@ mvn test
 # 元数据权限、生成与数据集策略检查
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*.py'
 
-# 完整隔离授权链：先构建 Connector，脚本会打包网关并运行配套后端测试
+# 固定官方运行镜像与真实 SQL 链（先准备已通过测试的网关 JAR）
+bash scripts/build_engine.sh
 bash scripts/build_connector.sh
+python3 scripts/test_runtime_images.py
+
+# 相邻后端完整隔离授权链，脚本会打包网关并运行配套后端测试
 bash scripts/test_e2e.sh
 ```
 
-单独覆盖全部网关测试并打包时，准备 `127.0.0.1` 上的隔离无密码 Redis，执行 `AIO_QUERY_TEST_REDIS_PORT=<port> mvn -B -ntp verify -DfailIfNoTests=true`，不要指向业务 Redis。`AIO_QUERY_JAVA_HOME` / `JAVA_HOME` 可指定 JDK 21；`AIO_QUERY_GRADLE` 可指定 Gradle 8.14.3，不使用 Gradle 9。
+单独覆盖全部网关测试并打包时，准备 `127.0.0.1` 上的隔离无密码 Redis，执行 `AIO_QUERY_TEST_REDIS_PORT=<port> mvn -B -ntp verify -DfailIfNoTests=true`，不要指向业务 Redis。`AIO_QUERY_JAVA_HOME` / `JAVA_HOME` 可指定 JDK 21。
 
-完整端到端脚本需要相邻的 `aio-life-server`，可用 `AIO_LIFE_SOURCE` 指定路径。它创建临时 PostgreSQL / Redis / Hasura，使用虚构数据和测试密钥，退出时清理自己的容器与 Connector 进程。默认占用 `45680/45682/45683`，可通过 `AIO_QUERY_TEST_GATEWAY_PORT`、`AIO_QUERY_TEST_HASURA_PORT`、`AIO_QUERY_TEST_CONNECTOR_PORT` 调整。报告位于两仓库的 `target/surefire-reports/`，日志位于 `.cache/e2e/` 和后端 `target/query-e2e/`。
+完整端到端脚本需要相邻的 `aio-life-server`，可用 `AIO_LIFE_SOURCE` 指定路径。它创建临时 PostgreSQL / Redis / Hasura，使用虚构数据和测试密钥，退出时清理自己的容器与 Connector 容器。默认占用 `45680/45682/45683`，可通过 `AIO_QUERY_TEST_GATEWAY_PORT`、`AIO_QUERY_TEST_HASURA_PORT`、`AIO_QUERY_TEST_CONNECTOR_PORT` 调整。报告位于两仓库的 `target/surefire-reports/`，日志位于 `.cache/e2e/` 和后端 `target/query-e2e/`。
 
-[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行网关、Redis、Python 与镜像检查，通过后在 `main` / `v*` 发布网关镜像；不执行生产部署，也不代替 Hasura、Connector 和 PostgreSQL 的完整链路验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
+[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行 Java、Redis、Python、网关镜像检查，并在原生 amd64/arm64 上验收官方 Hasura → Connector → PostgreSQL 链；全部通过后在 `main` / `v*` 发布三种运行镜像。CI 不执行生产部署，也不代替真实用户授权与目标环境验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
 
 ## 目录结构
 
@@ -252,7 +256,7 @@ src/main/java/top/aiolife/query/  # API、鉴权、查询编译、执行、票�
 src/main/resources/             # 配置、数据集与关系白名单
 src/test/                       # Java 测试
 deploy/                         # Compose、镜像与只读账号示例
-connector/                      # 固定上游说明、补丁与派生 SQL
+connector/                      # 上游来源、许可证与派生 SQL
 scripts/                        # 元数据生成、构建与隔离验证
 examples/                       # REST、GraphQL 与 MCP 请求示例
 tests/                          # Python 策略测试与数据库夹具
@@ -263,6 +267,6 @@ docs/                           # 部署与历史验证记录
 
 ### 固定的上游来源
 
-构建脚本固定 Hasura Engine commit 和 PostgreSQL NDC 归档及校验值，Connector 补丁将原上游模块改为仅运行 PostgreSQL，并使用 jOOQ OSS。来源、补丁范围和许可核验记录统一见 [connector/UPSTREAM.md](connector/UPSTREAM.md)。既有记录中的 Connector 生产使用与再分发授权仍有待落实，不将本地验证视为完成发布条件。
+固定版本与多架构 digest 见 [deploy/upstreams.lock.json](deploy/upstreams.lock.json)。Hasura 使用官方 `ghcr.io/hasura/v3-engine:v2026.10.05`；入口仍为官方的 `ddn-engine-local-dev`，入口名称本身不决定是否支持自托管。PostgreSQL Connector 使用官方 `ghcr.io/hasura/ndc-postgres:v3.1.0`（NDC 0.2.4），替换原 JVM 派生实现。Connector 的 AIO Life 包装仅增加必填服务密钥和数据库 URI 的启动检查，不修改官方二进制。来源与许可文件见 [connector/UPSTREAM.md](connector/UPSTREAM.md)。
 
-隔离测试使用固定 digest 的 `ddn-engine-local-dev` 镜像。[build_engine.sh](scripts/build_engine.sh) 提供源码引擎构建入口；目标生产引擎、实际数据库结构、只读副本延迟、容量与发布网络需要单独验证。当前没有授权管理 UI、长期应用授权或自动密钥轮换。
+部署不依赖本机缓存编译产物、`docker load` 或容器内手工修改。目标数据库结构、只读账号权限、容量与生产网络仍须在部署环境验证。当前没有授权管理 UI、长期应用授权或自动密钥轮换。

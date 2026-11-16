@@ -14,18 +14,28 @@ def fields(dataset):
     # 全部物理字段均可读；ModelPermissions 独立强制用户隔离和逻辑删除过滤。
     return dict(dataset['fields'])
 
+NATIVE_TYPES = {
+    'BIGINT': ('int8', 'int64', 'int64AsString', 'BigInt'),
+    'VARCHAR': ('varchar', 'string', 'string', 'String'),
+    'TEXT': ('text', 'string', 'string', 'String'),
+    'JSONB': ('jsonb', 'json', 'json', 'Json'),
+    'DATE': ('date', 'date', 'date', 'String'),
+    'TIMESTAMP': ('timestamp', 'timestamp', 'timestamp', 'String'),
+    'INTEGER': ('int4', 'int32', 'int32', 'Int'),
+    'SMALLINT': ('int2', 'int16', 'int16', 'Int'),
+    'NUMERIC': ('numeric', 'bigdecimal', 'bigDecimalAsString', 'BigDecimal'),
+}
+
 def ndc_type(field):
-    return {'BIGINT':'INT64', 'VARCHAR':'STRING', 'TEXT':'STRING', 'JSONB':'JSON', 'DATE':'DATE', 'TIMESTAMP':'TIMESTAMP',
-            'INTEGER':'INT32', 'SMALLINT':'INT16', 'NUMERIC':'BIGDECIMAL'}[field['sqlType']]
+    return NATIVE_TYPES[field['sqlType']][0]
 
 def api_type(field):
-    return {'INT64':'BigInt', 'STRING':'String', 'DATE':'String', 'TIMESTAMP':'String',
-            'INT32':'Int', 'INT16':'Int', 'BIGDECIMAL':'BigDecimal', 'JSON':'Json'}[ndc_type(field)]
+    return NATIVE_TYPES[field['sqlType']][3]
 
 def comparison(field):
-    return {'INT64':'CategoryComparison', 'STRING':'IdComparison', 'DATE':'DateComparison',
-            'TIMESTAMP':'TimestampComparison', 'INT32':'IntComparison', 'INT16':'TinyIntComparison',
-            'BIGDECIMAL':'DecimalComparison'}[ndc_type(field)]
+    return {'int8':'CategoryComparison', 'varchar':'IdComparison', 'text':'IdComparison', 'date':'DateComparison',
+            'timestamp':'TimestampComparison', 'int4':'IntComparison', 'int2':'TinyIntComparison',
+            'numeric':'DecimalComparison'}[ndc_type(field)]
 
 def obj(kind, definition):
     return {'kind': kind, 'version': 'v1', 'definition': definition}
@@ -50,87 +60,112 @@ def write_bundle(output, bundle):
                 os.unlink(temporary)
 
 def connector_config():
-    tables = []
-    for dataset in DATASETS:
-        if dataset.get('nativeSql'): continue
-        columns = []
-        for name, field in fields(dataset).items():
-            columns.append({'name':field['column'], 'description':None, 'type':field['sqlType'],
-                'numeric_precision':10 if field['kind']=='DECIMAL' else None,
-                'numeric_scale':2 if field['kind']=='DECIMAL' else None,
-                'nullable':field['nullable'], 'auto_increment':False, 'is_primarykey':name=='id'})
-        tables.append({'tableName':dataset['name'], 'tableType':'TABLE', 'description':None,
-                       'columns':columns, 'pks':['id'], 'fks':{}})
-    return {'jdbcUrl':{'variable':'JDBC_URL'}, 'jdbcProperties':{'connectTimeout':'2','socketTimeout':'6',
-            'options':'-c statement_timeout=5000 -c default_transaction_read_only=on', 'stringtype':'unspecified'},
-            'tables':tables, 'functions':[], 'nativeQueries':{
-                relation['collection']: {
-                    'sql': (ROOT / relation['nativeSql']).read_text(),
-                    'columns': {field['column']: {'type': 'nullable', 'underlying_type': {'type': 'named', 'name': field['sqlType']}}
-                                if field['nullable'] else {'type': 'named', 'name': field['sqlType']}
-                                for field in relation['fields'].values()},
-                    'arguments': {}, 'isProcedure': False
-                } for relations in RELATIONSHIPS.values() for relation in relations.values()} | {
-                dataset['name']: {'sql': (ROOT / dataset['nativeSql']).read_text(),
-                    'columns': {field['column']: {'type':'nullable','underlying_type':{'type':'named','name':field['sqlType']}} if field['nullable'] else {'type':'named','name':field['sqlType']} for field in dataset['fields'].values()},
-                    'arguments': {}, 'isProcedure': False}
-                for dataset in DATASETS if dataset.get('nativeSql')}}
+    """Official ndc-postgres v3 configuration; no live database introspection."""
+    scalar = {}
+    for native, _, representation, _ in NATIVE_TYPES.values():
+        operators = {} if native == 'jsonb' else {
+            '_eq': {'operatorName':'=', 'operatorKind':'equal', 'argumentType':native, 'isInfix':True}}
+        if native not in ['varchar', 'text', 'jsonb']:
+            operators.update({name: {'operatorName':sql, 'operatorKind':'custom', 'argumentType':native, 'isInfix':True}
+                              for name, sql in [('_gte','>='), ('_lt','<'), ('_lte','<=')]})
+        aggregates = {}
+        if native in ['int4', 'numeric']:
+            # Use the qualified PostgreSQL function to retain SQL's NULL on empty
+            # input; the NDC built-in `sum` deliberately coalesces that to zero.
+            aggregates = {'pg_catalog.sum' if name == 'sum' else name:
+                          {'returnType': 'int8' if native == 'int4' and name == 'sum' else native}
+                          for name in ['sum', 'max', 'min']}
+        scalar[native] = {'typeName':native, 'schemaName':'pg_catalog', 'aggregateFunctions':aggregates,
+                          'comparisonOperators':operators, 'typeRepresentation':representation}
+
+    def columns(values):
+        return {field['column']: {'name':field['column'], 'type':{'scalarType':ndc_type(field)},
+                                 'nullable':'nullable' if field['nullable'] else 'nonNullable'}
+                for field in values.values()}
+
+    tables = {dataset['name']: {'schemaName':'public', 'tableName':dataset['name'],
+                               'columns':columns(dataset['fields']), 'uniquenessConstraints':{'primary':['id']},
+                               'foreignRelations':{}}
+              for dataset in DATASETS if not dataset.get('nativeSql')}
+    natives = {dataset['name']: dataset for dataset in DATASETS if dataset.get('nativeSql')}
+    natives.update({relation['collection']: relation for relations in RELATIONSHIPS.values() for relation in relations.values()})
+    queries = {name: {'sql':{'inline':(ROOT / definition['nativeSql']).read_text().strip().rstrip(';')},
+                      'columns':columns(definition['fields']), 'arguments':{}}
+               for name, definition in natives.items()}
+    return {'version':'5',
+            'connectionSettings':{'connectionUri':{'variable':'CONNECTION_URI'},
+                                  'poolSettings':{'maxConnections':10, 'poolTimeout':3, 'idleTimeout':60,
+                                                  'checkConnectionAfterIdle':30, 'connectionLifetime':300},
+                                  'isolationLevel':'ReadCommitted'},
+            'metadata':{'tables':tables, 'types':{'scalar':scalar, 'composite':{}},
+                        'nativeOperations':{'queries':queries, 'mutations':{}}},
+            'mutationsVersion':None}
+
+
+def connector_schema(config):
+    """NDC 0.2 schema, checked against official print-schema-and-capabilities in CI."""
+    scalar_types = {}
+    for native, representation, _, _ in NATIVE_TYPES.values():
+        definition = config['metadata']['types']['scalar'][native]
+        ops = {name: {'type':'equal'} if operator['operatorKind'] == 'equal' else
+                      {'type':'custom','argument_type':{'type':'named','name':native}}
+               for name, operator in definition['comparisonOperators'].items()}
+        aggregates = {}
+        for function, output in definition['aggregateFunctions'].items():
+            if function in ['max', 'min']:
+                aggregates[function] = {'type':function}
+            else:
+                aggregates[function] = {'type':'custom','result_type':{'type':'nullable','underlying_type':{'type':'named','name':output['returnType']}}}
+        scalar_types[native] = {'representation':{'type':representation}, 'comparison_operators':ops,
+                                'aggregate_functions':aggregates, 'extraction_functions':{}}
+    schema = {'scalar_types':scalar_types, 'object_types':{}, 'collections':[], 'functions':[], 'procedures':[],
+              'capabilities':{'query':{'aggregates':{'count_scalar_type':'int8'}}}, 'request_arguments':None}
+    for native in [False, True]:
+        definitions = config['metadata']['nativeOperations']['queries'] if native else config['metadata']['tables']
+        for name, definition in sorted(definitions.items()):
+            output = {}
+            for column, field in definition['columns'].items():
+                kind = {'type':'named','name':field['type']['scalarType']}
+                if field['nullable'] == 'nullable': kind = {'type':'nullable','underlying_type':kind}
+                output[column] = {'type':kind}
+            schema['object_types'][name] = {'fields':output, 'foreign_keys':{}}
+            schema['collections'].append({'name':name,'type':name,'arguments':{},
+                                           'uniqueness_constraints':{} if native else
+                                           {'primary':{'unique_columns':['id']}}})
+    return schema
+
 
 def build(connector_url, connector_key):
-    scalar_types = {}
-    for name, representation in [('STRING','string'), ('DATE','date'), ('TIMESTAMP','timestamp'),
-                                 ('INT16','int16'), ('INT32','int32'), ('INT64','int64'), ('BIGDECIMAL','bigdecimal'), ('JSON','json')]:
-        ops = {'_eq': {'type':'equal'}}
-        if name not in ['STRING', 'JSON']:
-            ops.update({op:{'type':'custom','argument_type':{'type':'named','name':name}} for op in ['_gte','_lt','_lte']})
-        scalar_types[name] = {'representation':{'type':representation}, 'comparison_operators':ops, 'aggregate_functions':{}}
-    for name, result in [('INT32','INT64'), ('BIGDECIMAL','BIGDECIMAL')]:
-        for function in ['sum', 'max', 'min']:
-            scalar_types[name]['aggregate_functions'][function] = {'result_type':{'type':'named','name':result}}
-    schema = {'scalar_types':scalar_types, 'object_types':{}, 'collections':[], 'functions':[], 'procedures':[]}
-    for dataset in DATASETS:
-        ndc_fields = {}
-        for field in fields(dataset).values():
-            kind = {'type':'named','name':ndc_type(field)}
-            if field['nullable']: kind = {'type':'nullable','underlying_type':kind}
-            ndc_fields[field['column']] = {'type':kind,'arguments':{}}
-        schema['object_types'][dataset['name']] = {'fields':ndc_fields}
-        schema['collections'].append({'name':dataset['name'], 'type':dataset['name'], 'arguments':{},
-            'uniqueness_constraints':{'primary':{'unique_columns':['id']}}, 'foreign_keys':{}})
-    for relations in RELATIONSHIPS.values():
-        for relation in relations.values():
-            collection = relation['collection']
-            schema['object_types'][collection] = {'fields': {
-                field['column']: {'type': {'type': 'nullable', 'underlying_type': {'type': 'named', 'name': ndc_type(field)}}
-                                  if field['nullable'] else {'type': 'named', 'name': ndc_type(field)}, 'arguments': {}}
-                for field in relation['fields'].values()}}
-            schema['collections'].append({'name': collection, 'type': collection, 'arguments': {},
-                'uniqueness_constraints': {'primary': {'unique_columns': ['record_id']}}, 'foreign_keys': {}})
+    schema = connector_schema(connector_config())
+    capabilities = {'version':'0.2.4','capabilities':{
+        'query':{'aggregates':{},'variables':{},'explain':{},
+                 'nested_fields':{'filter_by':{},'order_by':{},'aggregates':{}},'exists':{'nested_collections':{}}},
+        'mutation':{'transactional':{},'explain':{}},
+        'relationships':{'relation_comparisons':{},'order_by_aggregate':{},'nested':{'array':{}}}}}
     objects = [obj('DataConnectorLink', {'name':'postgresql', 'url':{'singleUrl':{'value':connector_url}},
-        'headers':{'Authorization':{'value':'Bearer '+connector_key}}, 'schema':{'version':'v0.1','schema':schema,
-        'capabilities':{'version':'0.1.6','capabilities':{'query':{'aggregates':{},'variables':{}}, 'mutation':{},
-        'relationships':{'relation_comparisons':{},'order_by_aggregate':{}}}}}})]
+        'headers':{'Authorization':{'value':'Bearer '+connector_key}},
+        'schema':{'version':'v0.2','schema':schema,'capabilities':capabilities}})]
     for name in ['BigInt','BigDecimal','Json']:
         objects.append(obj('ScalarType', {'name':name,'graphql':{'typeName':name}}))
-    for ndc, api in [('STRING','String'),('DATE','String'),('TIMESTAMP','String'),('INT16','Int'),('INT32','Int'),('INT64','BigInt'),('BIGDECIMAL','BigDecimal'),('JSON','Json')]:
+    for ndc, _, _, api in NATIVE_TYPES.values():
         objects.append(obj('DataConnectorScalarRepresentation', {'dataConnectorName':'postgresql','dataConnectorScalarType':ndc,'representation':api}))
-    for name, scalar, api, ops in [('DateComparison','DATE','String',['_gte','_lt']),
-                                  ('TimestampComparison','TIMESTAMP','String',['_gte','_lt']),
-                                  ('IdComparison','STRING','String',['_eq']),
-                                  ('CategoryComparison','INT64','BigInt',['_eq']),
-                                  ('TinyIntComparison','INT16','Int',['_eq','_gte','_lte']),
-                                  ('IntComparison','INT32','Int',['_eq','_gte','_lte']),
-                                  ('DecimalComparison','BIGDECIMAL','BigDecimal',['_eq','_gte','_lte'])]:
+    for name, scalars, api, ops in [('DateComparison',['date'],'String',['_gte','_lt']),
+                                   ('TimestampComparison',['timestamp'],'String',['_gte','_lt']),
+                                   ('IdComparison',['varchar','text'],'String',['_eq']),
+                                   ('CategoryComparison',['int8'],'BigInt',['_eq']),
+                                   ('TinyIntComparison',['int2'],'Int',['_eq','_gte','_lte']),
+                                   ('IntComparison',['int4'],'Int',['_eq','_gte','_lte']),
+                                   ('DecimalComparison',['numeric'],'BigDecimal',['_eq','_gte','_lte'])]:
         objects.append(obj('BooleanExpressionType', {'name':name,'operand':{'scalar':{'type':api,
             'comparisonOperators':[{'name':op,'argumentType':api+'!'} for op in ops],
-            'dataConnectorOperatorMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':scalar,'operatorMapping':{op:op for op in ops}}]}},
+            'dataConnectorOperatorMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':scalar,'operatorMapping':{op:op for op in ops}} for scalar in scalars]}},
             'logicalOperators':{'enable':False}, 'isNull':{'enable':False}, 'graphql':{'typeName':name}}))
-    for name, api, ndc, result in [('IntSum','Int','INT32','BigInt'), ('DecimalSum','BigDecimal','BIGDECIMAL','BigDecimal')]:
+    for name, api, ndc in [('IntSum','Int','int4'), ('DecimalSum','BigDecimal','numeric')]:
         objects.append(obj('AggregateExpression', {'name':name,'operand':{'scalar':{'aggregatedType':api,
-            'aggregationFunctions':[{'name':function,'returnType':result} for function in ['sum','max','min']],
-            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':ndc,'functionMapping':{function:{'name':function} for function in ['sum','max','min']}}]}},
+            'aggregationFunctions':[{'name':function,'returnType':'BigInt' if ndc == 'int4' and function == 'sum' else api} for function in ['sum','max','min']],
+            'dataConnectorAggregationFunctionMapping':[{'dataConnectorName':'postgresql','dataConnectorScalarType':ndc,'functionMapping':{function:{'name':'pg_catalog.sum' if function == 'sum' else function} for function in ['sum','max','min']}}]}},
             'count':{'enable':False},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
-    objects.append(obj('AggregateExpression', {'name':'DateDistinct','operand':{'scalar':{'aggregatedType':'String','aggregationFunctions':[],'dataConnectorAggregationFunctionMapping':[]}}, 'count':{'enable':False},'countDistinct':{'enable':True},'graphql':{'selectTypeName':'DateDistinctStats'}}))
+    objects.append(obj('AggregateExpression', {'name':'DateDistinct','operand':{'scalar':{'aggregatedType':'String','aggregationFunctions':[],'dataConnectorAggregationFunctionMapping':[]}}, 'count':{'enable':False},'countDistinct':{'enable':True,'returnType':'BigInt'},'graphql':{'selectTypeName':'DateDistinctStats'}}))
     for dataset in DATASETS:
         name = dataset['typeName']; model = name+'Model'; all_fields = fields(dataset)
         objects.append(obj('ObjectType', {'name':name,'graphql':{'typeName':name},
@@ -143,7 +178,7 @@ def build(connector_url, connector_key):
                 for key, relation in RELATIONSHIPS.get(dataset['name'], {}).items()]}}, 'logicalOperators':{'enable':False},'isNull':{'enable':False},'graphql':{'typeName':name+'BoolExp'}}))
         objects.append(obj('AggregateExpression', {'name':name+'Aggregate','operand':{'object':{'aggregatedType':name,
             'aggregatableFields':[{'fieldName':key,'aggregateExpression':'DecimalSum' if dataset['fields'][key]['kind']=='DECIMAL' else 'IntSum'} for key in dataset['aggregateFields']] + [{'fieldName':key,'aggregateExpression':'DateDistinct'} for key in dataset.get('distinctFields',[])]}},
-            'count':{'enable':True},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
+            'count':{'enable':True,'returnType':'BigInt'},'countDistinct':{'enable':False},'graphql':{'selectTypeName':name+'Stats'}}))
         objects.append(obj('Model', {'name':model,'objectType':name,'source':{'dataConnectorName':'postgresql','collection':dataset['name']},
             'filterExpressionType':name+'BoolExp','aggregateExpression':name+'Aggregate',
             'orderableFields':[{'fieldName':key,'orderByDirections':{'enableAll':True}} for key in dataset['orderFields']],
@@ -184,7 +219,9 @@ def build(connector_url, connector_key):
         'orderByInput':{'fieldName':'orderBy','enumDirectionValues':{'asc':'Asc','desc':'Desc'},'enumTypeNames':[{'directions':['Asc','Desc'],'typeName':'OrderDirection'}]},
         'aggregate':{'filterInputFieldName':'filter','countFieldName':'count','countDistinctFieldName':'countDistinct'}},
         'mutation':{'rootOperationTypeName':'Mutation'}}))
-    return {'version':'v3','subgraphs':[{'name':'aio','objects':objects}],'flags':{}}, schema
+    # Preserve the webhook's JSON string for BIGINT identities. Legacy session
+    # casting parses custom scalars as numbers, which loses precision downstream.
+    return {'version':'v3','subgraphs':[{'name':'aio','objects':objects}],'flags':{'json_session_variables':True}}, schema
 
 if __name__ == '__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,default=ROOT/'.cache/hasura');args=parser.parse_args()
