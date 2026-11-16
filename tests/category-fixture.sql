@@ -8,13 +8,13 @@ CREATE TABLE time_record (
   relate_type SMALLINT NULL, user_id BIGINT NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
 );
 CREATE TABLE time_tracker_category (
-  id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, template_id BIGINT NULL,
+  id BIGINT PRIMARY KEY, user_id BIGINT NULL, template_id BIGINT NULL,
   name VARCHAR(100) NULL, is_deleted SMALLINT NOT NULL DEFAULT 0
 );
 INSERT INTO time_tracker_category(id,user_id,template_id,name,is_deleted) VALUES
-  (1,0,NULL,'休息',0), (2,0,NULL,'工作',0), (3,0,NULL,'休息',1),
-  (4,101,NULL,'午休',0), (5,102,NULL,'休息',0), (6,0,NULL,'公共原名',0),
-  (7,101,6,'休息',0), (8,0,NULL,'休息',0), (9,101,8,'阅读',0),
+  (1,NULL,NULL,'休息',0), (2,NULL,NULL,'工作',0), (3,NULL,NULL,'休息',1),
+  (4,101,NULL,'午休',0), (5,102,NULL,'休息',0), (6,NULL,NULL,'公共原名',0),
+  (7,101,6,'休息',0), (8,NULL,NULL,'休息',0), (9,101,8,'阅读',0),
   (10,102,1,'其他用户的覆盖',0), (11,101,1,'已删除的覆盖',1),
   (9007199254740993,101,NULL,'休息',0);
 INSERT INTO time_record(id,date,category_id,user_id) VALUES

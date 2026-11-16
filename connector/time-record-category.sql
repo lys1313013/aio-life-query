@@ -8,6 +8,6 @@ SELECT t.id AS record_id, t.user_id, c.id,
                  ORDER BY o.id DESC LIMIT 1), c.name) AS name
 FROM time_record t
 JOIN time_tracker_category c ON c.id = t.category_id
-  AND (c.user_id = 0 OR c.user_id = t.user_id)
+  AND (c.user_id IS NULL OR c.user_id = t.user_id)
   AND c.template_id IS NULL AND c.is_deleted = 0
 WHERE t.is_deleted = 0
