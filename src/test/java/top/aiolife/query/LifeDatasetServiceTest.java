@@ -32,7 +32,7 @@ class LifeDatasetServiceTest {
             dataset.example().replace("{id}","{"+fields+"}"),json.createObjectNode().put("start","2026-09-01").put("end","2026-10-01"));
     }
 
-    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","performance"})
+    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","event_record"})
     void detailsPreserveIdsAndAuthorizeTheDatasetOnce(String name) throws Exception {
         var dataset=QueryDatasets.named(name);
         when(access.evaluate("token",name)).thenReturn(user);
@@ -67,7 +67,7 @@ class LifeDatasetServiceTest {
         when(access.evaluate("token", "read_record")).thenReturn(user);
         var detail = json.valueToTree(service.catalog("token", "read_record"));
         assertTrue(detail.has("graphqlSdl"));
-        assertEquals("read-record-v3", detail.path("releaseId").asText());
+        assertEquals("read-record-v4", detail.path("releaseId").asText());
         assertEquals(4, detail.at("/fields/status/values").size());
         assertEquals(10000, detail.at("/limits/maxOffset").asInt());
         assertFalse(detail.has("schemaVersion"));
@@ -75,12 +75,12 @@ class LifeDatasetServiceTest {
     }
 
     @Test void currencyStaysExactAndUndeclaredFieldsAreRejected() throws Exception {
-        var dataset=QueryDatasets.named("performance"); when(access.evaluate("token","performance")).thenReturn(user);
+        var dataset=QueryDatasets.named("event_record"); when(access.evaluate("token","event_record")).thenReturn(user);
         when(http.post(any(),anyMap(),any(),anyInt(),anyInt())).thenReturn(new BoundedHttp.Response(200,
-            json.readTree("{\"data\":{\"performances\":[{\"id\":\"1\",\"ticketPrice\":\"12345678.99\"}]}}")));
-        assertEquals("12345678.99",json.valueToTree(service.execute("token",request(dataset,"id ticketPrice"))).at("/result/performances/0/ticketPrice").textValue());
+            json.readTree("{\"data\":{\"eventRecords\":[{\"id\":\"1\",\"ticketPrice\":\"12345678.99\"}]}}")));
+        assertEquals("12345678.99",json.valueToTree(service.execute("token",request(dataset,"id ticketPrice"))).at("/result/eventRecords/0/ticketPrice").textValue());
         when(http.post(any(),anyMap(),any(),anyInt(),anyInt())).thenReturn(new BoundedHttp.Response(200,
-            json.readTree("{\"data\":{\"performances\":[{\"id\":\"1\",\"ticketPrice\":\"19.99\",\"orderNumber\":\"private\"}]}}")));
+            json.readTree("{\"data\":{\"eventRecords\":[{\"id\":\"1\",\"ticketPrice\":\"19.99\",\"orderNumber\":\"private\"}]}}")));
         assertThrows(QueryException.class,()->service.execute("token",request(dataset,"id ticketPrice")));
     }
 

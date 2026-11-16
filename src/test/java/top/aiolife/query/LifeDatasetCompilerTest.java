@@ -18,7 +18,7 @@ class LifeDatasetCompilerTest {
         return "where:{" + dataset.rangeFields().getFirst() + ":{_gte:\"2026-09-01\",_lt:\"2026-10-01\"}}";
     }
 
-    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","performance"})
+    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","event_record"})
     void boundedDetailsAndStatsUseOnlyTheSelectedDataset(String name) {
         var dataset = QueryDatasets.named(name);
         var plan = compiler.compile(request(dataset, "query Q { rows:"+dataset.root()+"("+where(dataset)+",limit:2,offset:1){recordId:id} }"));
@@ -43,10 +43,10 @@ class LifeDatasetCompilerTest {
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"("+"where:{createdAt:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},status:{_eq:\"invented\"}}"+"){id} }")));
     }
 
-    @ParameterizedTest @ValueSource(strings={"performance"})
+    @ParameterizedTest @ValueSource(strings={"event_record"})
     void currencyFiltersRequireExactDecimalStrings(String name) {
         var dataset = QueryDatasets.named(name);
-        String query="query Q { performances(where:{performanceDate:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},ticketPrice:{_gte:\"19.99\"}}){id ticketPrice} }";
+        String query="query Q { eventRecords(where:{eventDate:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},ticketPrice:{_gte:\"19.99\"}}){id ticketPrice} }";
         assertDoesNotThrow(() -> compiler.compile(request(dataset,query)));
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,query.replace("19.99","19.999"))));
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,query.replace("\"19.99\"","19.99"))));

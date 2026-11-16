@@ -21,7 +21,7 @@ class DatasetAccessClientTest {
     private Map<String,Object> decision(String role,String scope) {
         return Map.of("userId","9007199254740993","appId","aio-life-query","role",role,"scopes",List.of(scope),"credentialId","a".repeat(32),"credentialType","login","expiresAt",Long.MAX_VALUE);
     }
-    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","performance"})
+    @ParameterizedTest @ValueSource(strings={"exercise_record","read_record","movie","b_video","event_record"})
     void roleAndScopeMustMatchTheRequestedDataset(String name) {
         var dataset=QueryDatasets.named(name);
         {

@@ -89,11 +89,11 @@ bash scripts/smoke_image.sh aio-life-query:local
 
 ```bash
 export AIO_QUERY_GATEWAY_IMAGE='<registry>/<namespace>/aio-life-query@sha256:<digest>'
-docker compose -f deploy/compose.yml pull gateway
-docker compose -f deploy/compose.yml up -d --no-build gateway
+docker compose -f deploy/compose.yml pull aio-life-query
+docker compose -f deploy/compose.yml up -d --no-build aio-life-query
 ```
 
-启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时，先执行 `bash scripts/build_connector.sh` 准备 PostgreSQL Connector 编译产物，再执行 `docker compose -f deploy/compose.yml build gateway postgresql-connector`。Hasura 引擎镜像需单独准备，可使用 `bash scripts/build_engine.sh` 构建，并在目标环境验收后设置 `AIO_QUERY_ENGINE_IMAGE`。GitHub Actions 只构建及推送网关镜像，没有 SSH 部署或自动修改生产服务。
+启动整套服务且全部镜像已准备时，执行 `docker compose -f deploy/compose.yml up -d --no-build`。需要本地构建时，先执行 `bash scripts/build_connector.sh` 准备 PostgreSQL Connector 编译产物，再执行 `docker compose -f deploy/compose.yml build aio-life-query postgresql-connector`。Hasura 引擎镜像需单独准备，可使用 `bash scripts/build_engine.sh` 构建，并在目标环境验收后设置 `AIO_QUERY_ENGINE_IMAGE`。GitHub Actions 只构建及推送网关镜像，没有 SSH 部署或自动修改生产服务。
 
 ### 升级字段和分类关系
 

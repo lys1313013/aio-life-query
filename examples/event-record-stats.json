@@ -1,0 +1,8 @@
+{
+  "query": "query EventSummary($start:String!,$end:String!){eventRecordStats(where:{eventDate:{_gte:$start,_lt:$end}}){count ticketPrice{sum} durationMinutes{sum}}}",
+  "variables": {
+    "start": "2026-09-01",
+    "end": "2026-10-01"
+  },
+  "expectedRelease": "event-record-v1"
+}

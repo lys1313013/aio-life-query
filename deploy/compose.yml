@@ -1,20 +1,20 @@
 name: aio-life-query
 services:
-  gateway:
+  aio-life-query:
     image: ${AIO_QUERY_GATEWAY_IMAGE:-aio-life-query:local}
     build: ..
     ports: ["127.0.0.1:45680:45680"]
     environment:
       AIO_QUERY_ACCESS_URL: ${AIO_QUERY_ACCESS_URL:?Set AIO Life internal check-token URL}
       AIO_QUERY_MCP_ALLOWED_ORIGINS: ${AIO_QUERY_MCP_ALLOWED_ORIGINS:-}
-      AIO_QUERY_HASURA_URL: http://hasura:3000/graphql
+      AIO_QUERY_HASURA_URL: ${AIO_QUERY_HASURA_URL:-http://hasura:3000/graphql}
       AIO_QUERY_SERVICE_KEY: ${AIO_QUERY_SERVICE_KEY:?Set service secret}
       AIO_QUERY_WEBHOOK_KEY: ${AIO_QUERY_WEBHOOK_KEY:?Set webhook secret}
       AIO_QUERY_REDIS_HOST: redis
       AIO_QUERY_REDIS_PASSWORD: ${AIO_QUERY_REDIS_PASSWORD:?Set Redis secret}
     volumes: ["audit:/app/audit"]
     networks: [query, gateway-outbound]
-    depends_on: [redis, hasura]
+    depends_on: [redis]
     restart: unless-stopped
   hasura:
     image: ${AIO_QUERY_ENGINE_IMAGE:?Set verified engine image digest}

@@ -193,7 +193,7 @@ if __name__ == '__main__':
     connector_key=os.environ.get('AIO_QUERY_CONNECTOR_KEY','')
     if len(connector_key)<32:raise SystemExit('AIO_QUERY_CONNECTOR_KEY must contain at least 32 characters')
     metadata,schema=build(os.environ.get('AIO_QUERY_CONNECTOR_URL','http://postgresql-connector:8080'),connector_key)
-    auth={'version':'v4','definition':{'mode':{'webhook':{'url':{'value':os.environ.get('AIO_QUERY_AUTH_WEBHOOK_URL','http://gateway:45680/internal/hasura/auth')},
+    auth={'version':'v4','definition':{'mode':{'webhook':{'url':{'value':os.environ.get('AIO_QUERY_AUTH_WEBHOOK_URL','http://aio-life-query:45680/internal/hasura/auth')},
         'method':'POST','customHeadersConfig':{'body':{'headers':{'forward':['authorization']}},'headers':{'additional':{'X-AIO-Webhook-Key':key}}}}}}}
     write_bundle(args.output, [('open_dd.json',metadata),('auth_config.json',auth),('ndc-schema.json',schema),('configuration.json',connector_config())])
     print('Built '+str(len(DATASETS))+' dataset OpenDD bundle at '+str(args.output))

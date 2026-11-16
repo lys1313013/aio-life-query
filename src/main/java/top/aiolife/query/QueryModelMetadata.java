@@ -9,7 +9,7 @@ import java.util.Set;
 final class QueryModelMetadata {
     private static final Map<String, String> TITLES = Map.of(
             "time_record", "时迹", "exercise_record", "运动", "read_record", "阅读",
-            "movie", "影视", "b_video", "视频", "performance", "演出", "income_month", "月收入");
+            "movie", "影视", "b_video", "视频", "event_record", "活动", "income_month", "月收入");
     private static final Map<String, String> LABELS = Map.ofEntries(
             Map.entry("id", "标识"), Map.entry("date", "记录日期"), Map.entry("title", "标题"),
             Map.entry("categoryId", "分类标识"), Map.entry("durationMinutes", "时长"),
@@ -24,7 +24,7 @@ final class QueryModelMetadata {
             Map.entry("type", "类型"), Map.entry("author", "作者"), Map.entry("url", "链接"),
             Map.entry("status", "状态"), Map.entry("totalProgress", "总进度"),
             Map.entry("currentProgress", "当前进度"), Map.entry("finishTime", "完成时间"),
-            Map.entry("remark", "备注"), Map.entry("fileId", "附件标识"),
+            Map.entry("remark", "备注"),
             Map.entry("director", "导演"), Map.entry("rating", "评分"),
             Map.entry("bvid", "视频 BV 号"), Map.entry("ownerName", "UP 主"),
             Map.entry("durationSeconds", "视频时长"), Map.entry("watchedDurationSeconds", "已观看时长"),
@@ -33,8 +33,8 @@ final class QueryModelMetadata {
             Map.entry("notes", "笔记"), Map.entry("aid", "视频 AV 号"),
             Map.entry("pagesInfo", "分集信息"), Map.entry("coverFileId", "封面文件标识"),
             Map.entry("coverState", "封面状态"), Map.entry("coverVersion", "封面版本"),
-            Map.entry("performanceName", "演出名称"), Map.entry("performer", "表演者"),
-            Map.entry("performanceType", "演出类型"), Map.entry("performanceDate", "演出时间"),
+            Map.entry("participants", "演出者／主讲人／嘉宾"),
+            Map.entry("eventType", "活动类型"), Map.entry("eventDate", "活动日期"),
             Map.entry("city", "城市"), Map.entry("venue", "场馆"), Map.entry("ticketPrice", "票价"),
             Map.entry("seatInfo", "座位"), Map.entry("review", "评价"),
             Map.entry("purchasePlatform", "购票平台"), Map.entry("orderNumber", "订单号"),

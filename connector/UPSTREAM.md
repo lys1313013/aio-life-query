@@ -17,7 +17,7 @@
 
 关系定义来自 [`relationships.json`](../src/main/resources/relationships.json)，派生 SQL 为 [`time-record-category.sql`](time-record-category.sql)。通过时迹 ID 关联，每条时迹最多一个分类；只公开 `id`、`name`，内部 `recordId` 用于 Hasura 映射，`userId` 用于行过滤。公共分类保留公共 ID，名称优先取当前用户未删除、ID 最大的覆盖；停用分类仍用于历史记录，删除、缺失或其他用户私有分类不返回。名称精确筛选可匹配多个同名分类。
 
-六个物理主数据集的 111 个物理字段来自 [`datasets.json`](../src/main/resources/datasets.json)，由元数据生成器显式投影；不扫描或公开全库。分类额外需要 `time_tracker_category` 的 `id`、`user_id`、`template_id`、`name`、`is_deleted` 五列 SELECT，完整授权见 [`readonly-account.sql.example`](../deploy/readonly-account.sql.example)。
+六个物理主数据集的 109 个物理字段来自 [`datasets.json`](../src/main/resources/datasets.json)，由元数据生成器显式投影；不扫描或公开全库。分类额外需要 `time_tracker_category` 的 `id`、`user_id`、`template_id`、`name`、`is_deleted` 五列 SELECT，完整授权见 [`readonly-account.sql.example`](../deploy/readonly-account.sql.example)。
 
 ## 构建与验证
 
@@ -34,3 +34,5 @@ Hasura 测试镜像是固定 digest 的 `ddn-engine-local-dev`；生产源码引
 月收入派生模型来自 [`income-month.sql`](income-month.sql)，按用户、收入类型、自然月分组后公开最大值等受控聚合。需要 `income` 的 `user_id/inc_type_id/inc_date/amt/is_deleted` 列级 SELECT；不修改 Connector 补丁，不接收客户端 SQL。数值聚合扩展为 `sum/max/min`，时迹日期支持 `countDistinct`。许可和生产引擎边界仍按上文执行。
 
 运动与收入类型名称关联（2026-11-11）：[`exercise-record-type.sql`](exercise-record-type.sql) 和 [`income-month-type.sql`](income-month-type.sql) 通过记录所属用户关联 `user_dict_data`，限定 `exercise_type` / `income_type` 字典域及未删除的基础项。公共只读标签不应用覆盖，其他公共类型使用当前用户最新未删除覆盖；停用项仍服务历史查询。每条运动记录、每个月收入分组至多关联一个类型，角色权限继续限定记录用户。月收入复合 ID 与原派生模型完全一致，不改变金额聚合口径。新增关系仅需更新元数据与列级只读授权，不修改 Connector 补丁。
+
+2026-11-16 部署结构对齐：物理活动模型使用 `event_record`，活动时间字段为 TIMESTAMP；阅读和影视移除旧 `file_id` 授权与投影。此调整不修改 Connector 补丁，需重新生成元数据并部署匹配的网关。

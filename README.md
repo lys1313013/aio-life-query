@@ -1,6 +1,6 @@
 # AIO Life Query
 
-AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 PostgreSQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频、演出记录及月收入汇总；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
+AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Hasura v3 和 PostgreSQL Connector。提供 REST、GraphQL HTTP 与 MCP 入口，查询当前用户的时迹、运动、阅读、影视、视频、活动记录及月收入汇总；支持明细、汇总及时迹分类关系，不接收原始 SQL，不提供写入或大模型调用。
 
 本仓库与 [aio-life-server](https://github.com/lys1313013/aio-life-server) 独立维护。用户身份和业务权限由配套后端校验，业务数据由 Connector 使用只读账号读取。
 
@@ -31,7 +31,7 @@ AIO Life 的独立只读查询服务，使用 Java 21、Spring Boot 3.5.16、Has
 | `AIO_QUERY_AUDIT_DIRECTORY` | 本机 `./artifacts/audit`；镜像 `/app/audit`，运行用户必须可写 |
 | `AIO_QUERY_MCP_ALLOWED_ORIGINS` | 空；需要浏览器 MCP 接入时填写逗号分隔的精确可信 Origin |
 | `AIO_QUERY_CONNECTOR_KEY` | 元数据生成和 Connector 部署必填，至少 32 字符，使用独立密钥 |
-| `AIO_QUERY_CONNECTOR_URL` / `AIO_QUERY_AUTH_WEBHOOK_URL` | 元数据生成默认 `http://postgresql-connector:8080` / `http://gateway:45680/internal/hasura/auth` |
+| `AIO_QUERY_CONNECTOR_URL` / `AIO_QUERY_AUTH_WEBHOOK_URL` | 元数据生成默认 `http://postgresql-connector:8080` / `http://aio-life-query:45680/internal/hasura/auth` |
 | `AIO_QUERY_JDBC_URL` | Compose 必填，含只读账号的 JDBC URL，由 Connector 使用 |
 | `AIO_QUERY_CONFIG_GID` | Compose 必填，容器读取生成元数据所需的附加组 ID |
 | `AIO_QUERY_ENGINE_IMAGE` | Compose 必填，经过目标环境验证的引擎镜像，部署时使用不可变 digest |
@@ -172,17 +172,19 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 配套 Web 提供查询工作台和数据模型页面，接入方式见[页面说明](https://github.com/lys1313013/aio-life-front/blob/main/docs/data-query.md)。数据集描述接口还返回 `title/typeName/root/statsRoot`、字段 `label/graphqlType/nullable/sortable/aggregateFunctions/distinctFunctions` 和公开 `relations`；这些能力均从发布白名单派生，不暴露物理表、派生 SQL 或内部关系键。REST 二级锁错误附带 `menuPath`，供现有解锁流程使用。
 
+2026-11-16：活动数据集使用当前 `event_record` 表及日期字段 `eventDate`；阅读和影视已移除旧 `fileId` 字段，图片关联由业务文件绑定接口负责。
+
 完整字段、类型和语义以 [datasets.json](src/main/resources/datasets.json) 及描述接口返回的 SDL 为准，避免在客户端硬编码字段目录。
 
 | 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
 | --- | --- | --- | --- | --- |
 | `time_record` | `time` | `time-record-v5` | `timeRecords` / `timeRecordStats` | `date` |
 | `exercise_record` | `exercise` | `exercise-record-v3` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
-| `read_record` | `reading` | `read-record-v3` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
-| `movie` | `movie` | `movie-v3` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
+| `read_record` | `reading` | `read-record-v4` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
+| `movie` | `movie` | `movie-v4` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
 | `b_video` | `video` | `b-video-v3` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
-| `income_month` | `income` | `income-month-v1` | `incomeMonths` / `incomeMonthStats` | `month`（自然月第一天） |
-| `performance` | `performance` | `performance-v3` | `performances` / `performanceStats` | `performanceDate` |
+| `income_month` | `income` | `income-month-v2` | `incomeMonths` / `incomeMonthStats` | `month`（自然月第一天） |
+| `event_record` | `event` | `event-record-v1` | `eventRecords` / `eventRecordStats` | `eventDate` |
 
 每次查询至少为一个范围字段提供 `_gte` / `_lt` 半开区间，最长 366 天。日期使用 `YYYY-MM-DD`；DATETIME 还接受无时区的 `YYYY-MM-DDTHH:mm:ss`，按数据库本地时间比较。按 `finishTime` 与按 `createdAt` 查询含义不同，范围条件不会自动应用到其他时间字段。
 
@@ -197,7 +199,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
 | JDBC / PostgreSQL 执行时限 | 5 秒 / `statement_timeout=5000` |
 
-所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和演出时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
+所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和活动时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
 没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由 JDBC 和数据库时限约束。
 

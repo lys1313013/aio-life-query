@@ -48,7 +48,7 @@ import sys
 print(Path(sys.argv[1]).read_text().replace('REPLACE_WITH_RANDOM_PASSWORD','fixture-query-read-password'))
 PYSQL
 docker exec -i "$test_name-postgres" psql -v ON_ERROR_STOP=1 -U postgres -d aio_life < "$test_dir/grants.sql"
-for rejected in 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT password FROM "user" LIMIT 0' 'UPDATE performance SET ticket_price=ticket_price WHERE 1=0'; do
+for rejected in 'UPDATE time_record SET duration=duration WHERE 1=0' 'SELECT password FROM "user" LIMIT 0' 'UPDATE event_record SET ticket_price=ticket_price WHERE 1=0'; do
   if docker exec "$test_name-postgres" psql -U aio_query_read -d aio_life -c "$rejected" >/dev/null 2>&1; then
     echo '只读列权限验证失败'; exit 1
   fi

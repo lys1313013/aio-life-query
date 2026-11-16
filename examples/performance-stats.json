@@ -1,8 +1,0 @@
-{
-  "query": "query PerformanceSummary($start:String!,$end:String!){performanceStats(where:{performanceDate:{_gte:$start,_lt:$end}}){count ticketPrice{sum} durationMinutes{sum}}}",
-  "variables": {
-    "start": "2026-09-01",
-    "end": "2026-10-01"
-  },
-  "expectedRelease": "performance-v3"
-}

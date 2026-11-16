@@ -23,7 +23,7 @@ class FullFieldQueryTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"time_record", "exercise_record", "read_record", "movie", "b_video", "performance"})
+    @ValueSource(strings = {"time_record", "exercise_record", "read_record", "movie", "b_video", "event_record"})
     void everyPhysicalFieldCanBeSelectedWhileTheDatasetRoleStillControlsExecution(String name) throws Exception {
         var d = QueryDatasets.named(name);
         var compiler = new QueryCompiler(json);

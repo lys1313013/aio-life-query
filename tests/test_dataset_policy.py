@@ -10,7 +10,7 @@ spec.loader.exec_module(metadata)
 class DatasetPolicyTest(unittest.TestCase):
     def test_six_public_datasets_and_exact_field_grants(self):
         bundle, schema = metadata.build('http://fixture', 'fixture-key')
-        expected = {'time_record', 'exercise_record', 'read_record', 'movie', 'b_video', 'performance', 'income_month'}
+        expected = {'time_record', 'exercise_record', 'read_record', 'movie', 'b_video', 'event_record', 'income_month'}
         self.assertEqual(expected | {'time_record_category', 'exercise_record_type', 'income_month_type'}, {table['name'] for table in schema['collections']})
         objects = bundle['subgraphs'][0]['objects']
         by_kind = lambda kind: [item['definition'] for item in objects if item['kind'] == kind]
@@ -34,8 +34,8 @@ class DatasetPolicyTest(unittest.TestCase):
                 self.assertEqual(set(columns), {column['name'] for column in tables[dataset['name']]['columns']})
                 self.assertIn('GRANT SELECT ('+', '.join(columns)+')\n  ON public.'+dataset['name'], grants)
                 self.assertEqual({}, tables[dataset['name']]['fks'])
-        self.assertIn('order_number', schema['object_types']['performance']['fields'])
-        self.assertIn('seat_info', schema['object_types']['performance']['fields'])
+        self.assertIn('order_number', schema['object_types']['event_record']['fields'])
+        self.assertIn('seat_info', schema['object_types']['event_record']['fields'])
         self.assertIn('notes', schema['object_types']['b_video']['fields'])
         self.assertEqual({'type': 'nullable', 'underlying_type': {'type': 'named', 'name': 'JSON'}},
                          schema['object_types']['b_video']['fields']['pages_info']['type'])
