@@ -53,7 +53,7 @@ class DatasetPolicyTest(unittest.TestCase):
         native = metadata.connector_config()['metadata']['nativeOperations']['queries']['time_record_category']
         self.assertEqual({}, native['arguments'])
         self.assertIn('o.user_id = t.user_id', native['sql']['inline'])
-        self.assertIn('c.user_id = 0 OR c.user_id = t.user_id', native['sql']['inline'])
+        self.assertIn('c.user_id IS NULL OR c.user_id = t.user_id', native['sql']['inline'])
 
     def test_type_relationships_are_scoped_and_have_no_public_roots(self):
         bundle, _ = metadata.build('http://fixture', 'fixture-key')
@@ -67,7 +67,7 @@ class DatasetPolicyTest(unittest.TestCase):
                 self.assertEqual([role], [p['role'] for p in permissions])
                 self.assertEqual({'sessionVariable': 'x-hasura-user-id'}, permissions[0]['select']['filter']['fieldComparison']['value'])
                 sql = metadata.connector_config()['metadata']['nativeOperations']['queries'][collection]['sql']['inline']
-                self.assertIn('d.user_id = 0 OR d.user_id = r.user_id', sql)
+                self.assertIn('d.user_id IS NULL OR d.user_id = r.user_id', sql)
                 self.assertIn('o.user_id = r.user_id', sql)
                 self.assertIn('d.template_id IS NULL AND d.is_deleted = 0', sql)
-                self.assertIn("COALESCE(d.is_readonly, 'N') <> 'Y'", sql)
+                self.assertIn("d.is_readonly = 0", sql)
