@@ -172,7 +172,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 配套 Web 提供查询工作台和数据模型页面，接入方式见[页面说明](https://github.com/lys1313013/aio-life-front/blob/main/docs/data-query.md)。数据集描述接口还返回 `title/typeName/root/statsRoot`、字段 `label/graphqlType/nullable/sortable/aggregateFunctions/distinctFunctions` 和公开 `relations`；这些能力均从发布白名单派生，不暴露物理表、派生 SQL 或内部关系键。REST 二级锁错误附带 `menuPath`，供现有解锁流程使用。
 
-2026-11-16：活动数据集使用当前 `event_record` 表及日期字段 `eventDate`；阅读和影视已移除旧 `fileId` 字段，图片关联由业务文件绑定接口负责。
+2026-11-16：活动数据集使用当前 `event_record` 表及日期字段 `eventDate`；阅读、影视和视频已移除旧 `fileId`/`coverFileId` 字段，图片关联由业务文件绑定接口负责。
 
 完整字段、类型和语义以 [datasets.json](src/main/resources/datasets.json) 及描述接口返回的 SDL 为准，避免在客户端硬编码字段目录。
 
@@ -182,7 +182,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | `exercise_record` | `exercise` | `exercise-record-v3` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
 | `read_record` | `reading` | `read-record-v4` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
 | `movie` | `movie` | `movie-v4` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
-| `b_video` | `video` | `b-video-v3` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
+| `b_video` | `video` | `b-video-v5` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
 | `income_month` | `income` | `income-month-v2` | `incomeMonths` / `incomeMonthStats` | `month`（自然月第一天） |
 | `event_record` | `event` | `event-record-v1` | `eventRecords` / `eventRecordStats` | `eventDate` |
 

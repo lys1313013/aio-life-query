@@ -31,7 +31,7 @@ final class QueryModelMetadata {
             Map.entry("episodes", "总集数"), Map.entry("currentEpisode", "当前集数"),
             Map.entry("lastWatched", "最后观看时间"), Map.entry("cover", "封面"),
             Map.entry("notes", "笔记"), Map.entry("aid", "视频 AV 号"),
-            Map.entry("pagesInfo", "分集信息"), Map.entry("coverFileId", "封面文件标识"),
+            Map.entry("pagesInfo", "分集信息"),
             Map.entry("coverState", "封面状态"), Map.entry("coverVersion", "封面版本"),
             Map.entry("participants", "演出者／主讲人／嘉宾"),
             Map.entry("eventType", "活动类型"), Map.entry("eventDate", "活动日期"),

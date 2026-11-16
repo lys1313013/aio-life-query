@@ -60,7 +60,9 @@ class FullFieldQueryTest {
         assertEquals("9007199254740993", result.path("createUser").textValue());
         assertEquals(0, result.path("isDeleted").intValue());
         if (name.equals("b_video")) {
-            assertEquals("9007199254740993", result.path("coverVersion").textValue());
+            assertFalse(result.has("coverVersion"));
+            assertFalse(result.has("coverState"));
+            assertFalse(result.has("cover"));
             assertTrue(result.path("pagesInfo").isArray());
             assertEquals("章节", result.at("/pagesInfo/0/part").textValue());
         }

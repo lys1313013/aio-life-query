@@ -538,7 +538,7 @@
     "typeName": "BVideo",
     "root": "bVideos",
     "statsRoot": "bVideoStats",
-    "release": "b-video-v3",
+    "release": "b-video-v5",
     "role": "ai_video_reader",
     "scope": "video.read",
     "description": "收藏视频、观看状态和进度；durationSeconds / watchedDurationSeconds 单位为秒",
@@ -619,12 +619,6 @@
         "sqlType": "TIMESTAMP",
         "nullable": false
       },
-      "cover": {
-        "column": "cover",
-        "kind": "TEXT",
-        "sqlType": "VARCHAR",
-        "nullable": true
-      },
       "notes": {
         "column": "notes",
         "kind": "TEXT",
@@ -667,24 +661,6 @@
         "sqlType": "TIMESTAMP",
         "nullable": false
       },
-      "coverFileId": {
-        "column": "cover_file_id",
-        "kind": "ID",
-        "sqlType": "VARCHAR",
-        "nullable": true
-      },
-      "coverState": {
-        "column": "cover_state",
-        "kind": "TEXT",
-        "sqlType": "VARCHAR",
-        "nullable": false
-      },
-      "coverVersion": {
-        "column": "cover_version",
-        "kind": "ID",
-        "sqlType": "BIGINT",
-        "nullable": false
-      },
       "userId": {
         "column": "user_id",
         "kind": "ID",
@@ -715,14 +691,10 @@
       "status",
       "lastWatched",
       "createdAt",
-      "cover",
       "aid",
       "createUser",
       "updateUser",
       "updatedAt",
-      "coverFileId",
-      "coverState",
-      "coverVersion",
       "userId",
       "isDeleted"
     ]
