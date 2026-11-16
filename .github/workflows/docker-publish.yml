@@ -112,7 +112,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      packages: write
     env:
       ACR_REGISTRY: ${{ secrets.ALIYUN_ACR_REGISTRY }}
       ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
@@ -127,33 +126,19 @@ jobs:
           path: ${{ runner.temp }}/query-jars
       - name: Prepare minimal Docker context
         run: bash scripts/prepare_image_context.sh "$RUNNER_TEMP/query-image" "$RUNNER_TEMP/query-jars"
-      - name: Resolve registry targets
+      - name: Require Alibaba Cloud ACR configuration
         id: targets
         run: |
           set -euo pipefail
-          image_name="$(printf '%s' "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')"
-          echo "ghcr=ghcr.io/$image_name" >> "$GITHUB_OUTPUT"
-          if [[ -n "$ACR_REGISTRY$ACR_NAMESPACE$ACR_USERNAME$ACR_PASSWORD" ]]; then
-            test -n "$ACR_REGISTRY" && test -n "$ACR_NAMESPACE" && test -n "$ACR_USERNAME" && test -n "$ACR_PASSWORD" || {
-              echo 'ACR requires all four ALIYUN_ACR secrets'; exit 1;
-            }
-            echo "acr_enabled=true" >> "$GITHUB_OUTPUT"
-            echo "acr=$ACR_REGISTRY/$ACR_NAMESPACE/aio-life-query" >> "$GITHUB_OUTPUT"
-          else
-            echo "acr_enabled=false" >> "$GITHUB_OUTPUT"
-          fi
+          test -n "$ACR_REGISTRY" && test -n "$ACR_NAMESPACE" && test -n "$ACR_USERNAME" && test -n "$ACR_PASSWORD" || {
+            echo 'ACR requires all four ALIYUN_ACR secrets'; exit 1;
+          }
+          echo "acr=$ACR_REGISTRY/$ACR_NAMESPACE/aio-life-query" >> "$GITHUB_OUTPUT"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Log in to Alibaba Cloud ACR
-        if: steps.targets.outputs.acr_enabled == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.ACR_REGISTRY }}
@@ -163,9 +148,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: |
-            ${{ steps.targets.outputs.ghcr }}
-            name=${{ steps.targets.outputs.acr || steps.targets.outputs.ghcr }},enable=${{ steps.targets.outputs.acr_enabled == 'true' }}
+          images: ${{ steps.targets.outputs.acr }}
           flavor: latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
@@ -191,7 +174,7 @@ jobs:
           cache-to: type=gha,scope=query-runtime,mode=min
       - name: Record immutable image reference
         env:
-          IMAGE: ${{ steps.targets.outputs.ghcr }}
+          IMAGE: ${{ steps.targets.outputs.acr }}
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           printf 'Published gateway image: `%s@%s`\n' "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"

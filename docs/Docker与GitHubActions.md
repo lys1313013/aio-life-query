@@ -1,6 +1,6 @@
 # Docker 打包与 GitHub Actions
 
-文档核对日期：2026-11-11。按当前 Dockerfile、Compose 和工作流核对；本次未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
+文档核对日期：2026-11-16。当前工作流仅发布阿里云 ACR；本次修改未触发 GitHub Actions、推送镜像或部署服务。接口与配置见 [README](../README.md)，历史构建结果见 [验证记录](验证记录.md)。
 
 沿用 `aio-life-server` 的测试 JAR → Dockerfile.runtime → 多架构镜像流程。当前自动发布对象为提供 REST / GraphQL HTTP / MCP 的自有 Java 网关 `aio-life-query`；Hasura 和 PostgreSQL Connector 保持独立镜像与配置，不能混入网关镜像。
 
@@ -52,15 +52,15 @@ bash scripts/smoke_image.sh aio-life-query:local
 
 此工作流验证本网关及 Redis。涉及相邻 AIO Life 后端、Hasura、Connector 和 PostgreSQL 的完整隔离验收使用 `scripts/test_e2e.sh`；不能把该工作流成功等同于完整业务链或生产部署已经验证。
 
-发布镜像默认是 `ghcr.io/<owner>/<repository>`，名称转为小写；当前仓库对应 `ghcr.io/lys1313013/aio-life-query`，这是工作流目标名称，不表示已核实镜像存在。GHCR 使用工作流的 `GITHUB_TOKEN`，仅发布任务拥有 `packages: write` 权限，不需要另建 GHCR 密钥。
+镜像仅发布至阿里云 ACR：`<registry>/<namespace>/aio-life-query`，其中 registry 和 namespace 来自下方 Secrets。工作流不登录或推送 GHCR，也不申请 `packages: write` 权限。
 
 镜像标签：
 
 - `main`：`latest`、`sha-<完整 commit SHA>`。
 - `v0.1.0`：`0.1.0`、`0.1`、`sha-<完整 commit SHA>`。版本发布不移动 `latest`。
-- 发布摘要记录 `ghcr.io/<owner>/<repository>@sha256:...`，生产部署优先使用此不可变引用。
+- 发布摘要记录 `<registry>/<namespace>/aio-life-query@sha256:...`，生产部署优先使用此不可变引用。
 
-实现使用与配套服务一致的 Docker Actions 主版本，以及显式文件上下文。相关行为见 [Docker Build Action](https://github.com/docker/build-push-action/tree/v6)、[Docker Metadata Action](https://github.com/docker/metadata-action/tree/v5) 与 [GitHub Token 文档](https://docs.github.com/en/actions/tutorials/authenticate-with-github_token)。
+实现使用与配套服务一致的 Docker Actions 主版本，以及显式文件上下文。相关行为见 [Docker Build Action](https://github.com/docker/build-push-action/tree/v6) 与 [Docker Metadata Action](https://github.com/docker/metadata-action/tree/v5)。
 
 ## 阿里云 ACR
 
@@ -73,22 +73,22 @@ bash scripts/smoke_image.sh aio-life-query:local
 | `ALIYUN_ACR_USERNAME` | 登录用户名 |
 | `ALIYUN_ACR_PASSWORD` | 登录密码 |
 
-四项都未配置时仅发布 GHCR；仅配置部分时工作流明确失败。完整配置后同时发布 `<registry>/<namespace>/aio-life-query`，标签与 GHCR 相同。为兼容 ACR，沿用配套服务的 `provenance: false` 与 `sbom: false` 设置。
+四项必须全部配置；全部缺失或仅配置部分时，发布任务在登录和构建前明确失败。完整配置后仅发布 `<registry>/<namespace>/aio-life-query`。为兼容 ACR，沿用配套服务的 `provenance: false` 与 `sbom: false` 设置。
 
-首次创建 GHCR Package 后，如需要匿名拉取，在 Package 设置中调整可见性；私有 Package 使用有读取权限的账号登录后拉取。仓库 Secrets 不会从相邻 `aio-life-server` 自动继承，可使用组织 Secrets 授予新仓库访问。
+拉取私有 ACR 镜像前，使用具备读取权限的账号登录对应 registry。仓库 Secrets 不会从相邻 `aio-life-server` 自动继承，可使用组织 Secrets 授予新仓库访问。
 
 ## Compose 使用发布镜像
 
 `deploy/compose.yml` 同时支持本地构建与运行已有镜像：
 
-- `AIO_QUERY_GATEWAY_IMAGE`：默认 `aio-life-query:local`，可指定 GHCR/ACR 的标签或 digest。
+- `AIO_QUERY_GATEWAY_IMAGE`：默认 `aio-life-query:local`，可指定 ACR 的标签或 digest。
 - `AIO_QUERY_CONNECTOR_IMAGE`：默认 `aio-life-query-postgresql-connector:local`，可指定独立维护并验收的 Connector 镜像。
 - `AIO_QUERY_ENGINE_IMAGE`：必须显式指定已验证的引擎镜像，原有要求保持不变。
 
 部署主机先注入服务密钥、只读 JDBC、Redis 配置和 `AIO_QUERY_CONFIG_GID`，并生成受保护元数据；完整变量见 [README](../README.md#运行环境变量)。Connector/Hasura 需要预先准备，网关替换示例（在本仓库根目录执行）：
 
 ```bash
-export AIO_QUERY_GATEWAY_IMAGE='ghcr.io/lys1313013/aio-life-query@sha256:<digest>'
+export AIO_QUERY_GATEWAY_IMAGE='<registry>/<namespace>/aio-life-query@sha256:<digest>'
 docker compose -f deploy/compose.yml pull gateway
 docker compose -f deploy/compose.yml up -d --no-build gateway
 ```
@@ -106,4 +106,4 @@ docker compose -f deploy/compose.yml up -d --no-build gateway
 
 Compose 只将网关 `45680` 绑定宿主回环地址。由 HTTPS 代理转发 `/api/v1/`、`/graphql` 和 `/mcp`，不公开 `/internal/hasura/auth`、管理端点、Redis、Hasura 或 Connector。
 
-当前独立仓库已配置 `origin=git@github.com:lys1313013/aio-life-query.git`。符合上述事件条件的推送才会触发工作流；本次仅核对本地配置，没有查询远程运行、Secrets、Package 可见性或镜像 digest。实际发布结果以对应 GitHub Actions 运行和仓库中的镜像为准。Hasura 生产源码镜像与 Connector 授权边界见 [README](../README.md#固定的上游来源)。
+当前独立仓库已配置 `origin=git@github.com:lys1313013/aio-life-query.git`。符合上述事件条件的推送才会触发工作流；2026-11-16 已配置并核对上述四项仓库 Actions Secrets，尚未验证 ACR 登录或镜像推送。实际发布结果以对应 GitHub Actions 运行和 ACR 中的镜像为准。Hasura 生产源码镜像与 Connector 授权边界见 [README](../README.md#固定的上游来源)。
