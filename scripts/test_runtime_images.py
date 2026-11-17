@@ -58,7 +58,7 @@ def fixture():
         "INSERT INTO time_tracker_category VALUES(1,NULL,NULL,'公共分类',0),(2,101,1,'休息',0),(3,102,1,'学习',0);",
         'CREATE TABLE user_dict_data(id BIGINT PRIMARY KEY,user_id BIGINT,template_id BIGINT,dict_type VARCHAR(80),dict_label VARCHAR(100),is_readonly SMALLINT,is_deleted SMALLINT);',
         "INSERT INTO user_dict_data VALUES(21,NULL,NULL,'exercise_type','公共运动',0,0),(22,NULL,NULL,'income_type','公共收入',0,0),(31,101,21,'exercise_type','俯卧撑',0,0),(32,102,21,'exercise_type','慢跑',0,0),(33,101,22,'income_type','工资',0,0),(34,102,22,'income_type','稿费',0,0);",
-        'CREATE TABLE income(user_id BIGINT,inc_type_id BIGINT,inc_date DATE,gross_amount NUMERIC(18,2),is_deleted SMALLINT);',
+        'CREATE TABLE income(user_id BIGINT,income_type_id BIGINT,inc_date DATE,gross_amount NUMERIC(18,2),is_deleted SMALLINT);',
         "INSERT INTO income VALUES(101,22,'2026-10-01',19.99,0),(101,22,'2026-10-02',20.02,0),(102,22,'2026-10-01',999999.00,0),(101,22,'2026-10-03',888888.00,1);",
         'CREATE TABLE sys_user(id BIGINT PRIMARY KEY,password TEXT);',
         "INSERT INTO sys_user VALUES(101,'must-not-be-readable');",

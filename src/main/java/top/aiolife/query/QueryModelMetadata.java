@@ -20,7 +20,7 @@ final class QueryModelMetadata {
             Map.entry("userId", "所属用户"), Map.entry("isDeleted", "删除标记"),
             Map.entry("relateId", "关联标识"), Map.entry("relateType", "关联类型"),
             Map.entry("exerciseDate", "运动日期"), Map.entry("exerciseCount", "运动数量"),
-            Map.entry("exerciseTypeId", "运动类型标识"), Map.entry("timeId", "时迹标识"),
+            Map.entry("exerciseTypeId", "运动类型标识"), Map.entry("timeRecordId", "时迹标识"),
             Map.entry("type", "类型"), Map.entry("author", "作者"), Map.entry("url", "链接"),
             Map.entry("status", "状态"), Map.entry("totalProgress", "总进度"),
             Map.entry("currentProgress", "当前进度"), Map.entry("finishDate", "完成日期"),

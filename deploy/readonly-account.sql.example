@@ -5,7 +5,7 @@ ALTER ROLE aio_query_read SET default_transaction_read_only=on;
 ALTER ROLE aio_query_read SET statement_timeout='5s';
 GRANT SELECT (id, date, category_id, duration_minutes, create_user, start_minute, end_minute, title, description, is_manual, create_time, update_user, update_time, relate_id, relate_type, user_id, is_deleted)
   ON public.time_record TO aio_query_read;
-GRANT SELECT (id, exercise_date, exercise_type_id, exercise_count, description, create_user, create_time, update_time, update_user, time_id, user_id, is_deleted)
+GRANT SELECT (id, exercise_date, exercise_type_id, exercise_count, description, create_user, create_time, update_time, update_user, time_record_id, user_id, is_deleted)
   ON public.exercise_record TO aio_query_read;
 GRANT SELECT (id, title, type, author, url, status, total_progress, current_progress, start_date, finish_date, create_time, remark, update_time, create_user, update_user, user_id, is_deleted)
   ON public.read_record TO aio_query_read;
@@ -20,7 +20,7 @@ GRANT SELECT (id, user_id, template_id, name, is_deleted)
 -- 升级现有只读账号时，只执行上面的 GRANT；先核对业务表和分类表的字段结构。
 
 -- 月收入模型仅需要这些源列，不授予额外表或写入权限。
-GRANT SELECT (user_id, inc_type_id, inc_date, gross_amount, is_deleted)
+GRANT SELECT (user_id, income_type_id, inc_date, gross_amount, is_deleted)
   ON public.income TO aio_query_read;
 
 -- 运动和月收入类型名称关系；保留公共、私有及个人覆盖的有效名称，排除已删除项。

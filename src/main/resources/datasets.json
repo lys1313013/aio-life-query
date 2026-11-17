@@ -209,10 +209,10 @@
         "sqlType": "BIGINT",
         "nullable": true
       },
-      "timeId": {
-        "column": "time_id",
+      "timeRecordId": {
+        "column": "time_record_id",
         "kind": "ID",
-        "sqlType": "VARCHAR",
+        "sqlType": "BIGINT",
         "nullable": true
       },
       "userId": {
@@ -240,7 +240,7 @@
       "createdAt",
       "updatedAt",
       "updateUser",
-      "timeId",
+      "timeRecordId",
       "userId",
       "isDeleted"
     ]

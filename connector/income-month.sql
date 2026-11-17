@@ -3,10 +3,10 @@
 SELECT CONCAT(user_id, ':', COALESCE(CAST(income_type_id AS TEXT), 'null'), ':', CAST(month AS TEXT)) AS id,
        user_id, income_type_id, month, monthly_amount, 0 AS is_deleted
 FROM (
-    SELECT user_id, inc_type_id AS income_type_id,
+    SELECT user_id, income_type_id,
            CAST(DATE_TRUNC('month', inc_date) AS DATE) AS month,
            SUM(gross_amount) AS monthly_amount
     FROM income
     WHERE is_deleted = 0
-    GROUP BY user_id, inc_type_id, CAST(DATE_TRUNC('month', inc_date) AS DATE)
+    GROUP BY user_id, income_type_id, CAST(DATE_TRUNC('month', inc_date) AS DATE)
 ) AS monthly_income
