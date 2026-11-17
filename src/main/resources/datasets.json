@@ -739,8 +739,8 @@
       },
       "eventDate": {
         "column": "event_date",
-        "kind": "DATETIME",
-        "sqlType": "TIMESTAMP",
+        "kind": "DATE",
+        "sqlType": "DATE",
         "nullable": false
       },
       "city": {

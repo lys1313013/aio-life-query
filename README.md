@@ -174,6 +174,8 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 
 2026-11-16：活动数据集使用当前 `event_record` 表及日期字段 `eventDate`；阅读、影视和视频已移除旧 `fileId`/`coverFileId` 字段，图片关联由业务文件绑定接口负责。
 
+2026-11-17：`event_record.event_date` 由 `timestamp` 改为 `date`，`eventDate` 按 `YYYY-MM-DD` 参与范围筛选，不再接受带时分秒的值。
+
 完整字段、类型和语义以 [datasets.json](src/main/resources/datasets.json) 及描述接口返回的 SDL 为准，避免在客户端硬编码字段目录。
 
 | 数据集 | domain | releaseId | 明细 / 汇总根字段 | 日期范围字段 |
@@ -199,7 +201,7 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | 授权接口 / Hasura 超时 | 3 秒 / 10 秒，包含正文读取 |
 | PostgreSQL 执行时限 | 只读账号 `statement_timeout=5000`，5 秒 |
 
-所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和活动时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.amt`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
+所有 ID、BIGINT、金额和汇总数值以字符串返回；其他字段以 SDL 和实际 JSON 为准，空集 `sum` 为 `null`，`pagesInfo` 是 JSON 对象/数组。时迹 `startMinute/endMinute` 为当天分钟数，阅读与影视同名字段为日期时间；视频时长为秒，时迹和活动时长为分钟，票价为元。运动 `count` 是记录条数，`exerciseCount` 应按运动类型分别统计。数值汇总支持 `sum/max/min`；时迹额外支持 `date { countDistinct }` 按日期去重。月收入模型按用户、收入类型和自然月汇总 `income.gross_amount`（未减税额），可用 `monthlyAmount { max }` 求最高单月金额。
 
 没有取消接口，HTTP 停止等待不保证数据库立即停止，执行时间由数据库时限约束。
 

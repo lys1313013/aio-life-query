@@ -5,7 +5,7 @@ SELECT CONCAT(user_id, ':', COALESCE(CAST(income_type_id AS TEXT), 'null'), ':',
 FROM (
     SELECT user_id, inc_type_id AS income_type_id,
            CAST(DATE_TRUNC('month', inc_date) AS DATE) AS month,
-           SUM(amt) AS monthly_amount
+           SUM(gross_amount) AS monthly_amount
     FROM income
     WHERE is_deleted = 0
     GROUP BY user_id, inc_type_id, CAST(DATE_TRUNC('month', inc_date) AS DATE)
