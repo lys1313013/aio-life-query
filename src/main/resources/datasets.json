@@ -258,7 +258,7 @@
     "rangeFields": [
       "createdAt",
       "startDate",
-      "finishTime"
+      "finishDate"
     ],
     "fields": {
       "id": {
@@ -398,7 +398,7 @@
     "rangeFields": [
       "createdAt",
       "startDate",
-      "finishTime"
+      "finishDate"
     ],
     "fields": {
       "id": {
