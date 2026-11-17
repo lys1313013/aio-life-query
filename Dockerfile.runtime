@@ -1,4 +1,4 @@
-# CI 使用已通过测试的 JAR；amd64/arm64 共用同一份 Java 字节码。
+# CI 使用已通过测试的 JAR；只构建并发布 linux/amd64 镜像。
 FROM eclipse-temurin:21-jre-alpine
 RUN apk add --no-cache tzdata \
     && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \

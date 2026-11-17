@@ -15,4 +15,4 @@ Connector 包装镜像增加一个 Rust 启动检查器，要求至少 32 字符
 
 业务派生 SQL 由本仓库维护：`time-record-category.sql` 合并当前用户的有效分类名称；`income-month.sql` 按用户、类型、自然月汇总；`exercise-record-type.sql` 与 `income-month-type.sql` 解析有效字典标签。定义来自 [relationships.json](../src/main/resources/relationships.json) 和 [datasets.json](../src/main/resources/datasets.json)，不扫描全库、不接收客户端 SQL、不创建数据库视图或外键。公共只读类型不接受个人覆盖，停用类型保留历史含义，删除、错误域及他人私有项不暴露。
 
-CI 在 amd64/arm64 原生运行镜像验收后，发布三个 ACR 标签系列。验收包含全部七个数据集、字段和大整数、用户/软删除隔离、分类与类型关系、金额和聚合、认证拒绝、只读权限和数据库时限。隔离授权桩不是生产用户授权验收。入口及发布配置见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。
+CI 在 amd64 原生运行镜像验收后，发布三个 ACR 标签系列。验收包含全部七个数据集、字段和大整数、用户/软删除隔离、分类与类型关系、金额和聚合、认证拒绝、只读权限和数据库时限。隔离授权桩不是生产用户授权验收。入口及发布配置见 [Docker 与 GitHub Actions](../docs/Docker与GitHubActions.md)。

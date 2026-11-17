@@ -20,8 +20,8 @@ PR、`main` 推送、`v*` 标签和手动运行都会检查；仅 `main` 或 `v*
 
 1. Java 21 `mvn verify`，使用隔离 Redis；要求存在测试报告且没有失败、错误或跳过项。运行 Python 元数据和文件权限测试，保存通过测试的 JAR。
 2. 构建网关运行镜像，检查启动、审计权限、认证拒绝、Java PID 1 和非 root 用户。
-3. 在原生 amd64、arm64 runner 上，从固定官方上游构建两个包装镜像，运行 `scripts/test_runtime_images.py`，验证七个数据集的完整 SQL 链、隔离、关系、金额、聚合、只读权限、数据库时限及缺少密钥拒绝启动。
-4. 全部成功后，Buildx 发布三个 amd64/arm64 镜像；CI 摘要记录不可变 digest。CI 不通过 SSH 更新服务器，不替代真实用户授权和生产环境验收。
+3. 在原生 amd64 runner 上，从固定官方上游构建两个包装镜像，运行 `scripts/test_runtime_images.py`，验证七个数据集的完整 SQL 链、隔离、关系、金额、聚合、只读权限、数据库时限及缺少密钥拒绝启动。
+4. 全部成功后，Buildx 发布三个 linux/amd64 镜像；CI 摘要记录不可变 digest。CI 不通过 SSH 更新服务器，不替代真实用户授权和生产环境验收。
 
 测试 JAR 保留 1 天，测试报告及隔离运行日志保留 7 天。测试 PostgreSQL 和 Redis 为虚构数据夹具；生产 Compose 不创建 Redis。
 

@@ -103,18 +103,10 @@ jobs:
         run: bash scripts/smoke_image.sh aio-life-query:ci
 
   runtime-check:
-    name: Verify official runtime (${{ matrix.arch }})
+    name: Verify official runtime (amd64)
     needs: test
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -135,13 +127,13 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: runtime-evidence-${{ matrix.arch }}
+          name: runtime-evidence-amd64
           path: .cache/aio-query-runtime-*/
           include-hidden-files: true
           retention-days: 7
 
   build-and-push:
-    name: Build and push amd64/arm64
+    name: Build and push amd64
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
@@ -172,8 +164,6 @@ jobs:
             echo 'ACR requires all four ALIYUN_ACR secrets'; exit 1;
           }
           echo "acr=$ACR_REGISTRY/$ACR_NAMESPACE/aio-life-query" >> "$GITHUB_OUTPUT"
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Log in to Alibaba Cloud ACR
@@ -201,7 +191,7 @@ jobs:
         with:
           context: ${{ runner.temp }}/query-image
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           # 与 aio-life-server 一致，兼容 ACR 的 manifest 类型。
           provenance: false
           sbom: false
@@ -216,7 +206,7 @@ jobs:
           context: .
           file: deploy/engine.Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           provenance: false
           sbom: false
           tags: ${{ steps.targets.outputs.acr }}:hasura-sha-${{ github.sha }}
@@ -231,7 +221,7 @@ jobs:
           context: .
           file: deploy/connector.Dockerfile
           push: true
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           provenance: false
           sbom: false
           tags: ${{ steps.targets.outputs.acr }}:connector-sha-${{ github.sha }}

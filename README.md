@@ -249,7 +249,7 @@ bash scripts/test_e2e.sh
 
 完整端到端脚本需要相邻的 `aio-life-server`，可用 `AIO_LIFE_SOURCE` 指定路径。它创建临时 PostgreSQL / Redis / Hasura，使用虚构数据和测试密钥，退出时清理自己的容器与 Connector 容器。默认占用 `45680/45682/45683`，可通过 `AIO_QUERY_TEST_GATEWAY_PORT`、`AIO_QUERY_TEST_HASURA_PORT`、`AIO_QUERY_TEST_CONNECTOR_PORT` 调整。报告位于两仓库的 `target/surefire-reports/`，日志位于 `.cache/e2e/` 和后端 `target/query-e2e/`。
 
-[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行 Java、Redis、Python、网关镜像检查，并在原生 amd64/arm64 上验收官方 Hasura → Connector → PostgreSQL 链；全部通过后在 `main` / `v*` 发布三种运行镜像。CI 不执行生产部署，也不代替真实用户授权与目标环境验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
+[GitHub Actions](.github/workflows/docker-publish.yml) 对 PR 执行 Java、Redis、Python、网关镜像检查，并在原生 amd64 上验收官方 Hasura → Connector → PostgreSQL 链；全部通过后在 `main` / `v*` 发布三种 linux/amd64 运行镜像。CI 不执行生产部署，也不代替真实用户授权与目标环境验收。历史通过结果见[验证记录](docs/验证记录.md)，不能作为当前代码或目标环境的验证结果。
 
 ## 目录结构
 
