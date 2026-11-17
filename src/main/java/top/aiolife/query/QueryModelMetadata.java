@@ -13,7 +13,7 @@ final class QueryModelMetadata {
     private static final Map<String, String> LABELS = Map.ofEntries(
             Map.entry("id", "标识"), Map.entry("date", "记录日期"), Map.entry("title", "标题"),
             Map.entry("categoryId", "分类标识"), Map.entry("durationMinutes", "时长"),
-            Map.entry("startTime", "开始时间"), Map.entry("endTime", "结束时间"), Map.entry("startMinute", "开始分钟"), Map.entry("endMinute", "结束分钟"),
+            Map.entry("startDate", "开始日期"), Map.entry("endTime", "结束时间"), Map.entry("startMinute", "开始分钟"), Map.entry("endMinute", "结束分钟"),
             Map.entry("description", "描述"), Map.entry("isManual", "手动记录"),
             Map.entry("createdAt", "创建时间"), Map.entry("updatedAt", "更新时间"),
             Map.entry("createUser", "创建人"), Map.entry("updateUser", "更新人"),
@@ -23,7 +23,7 @@ final class QueryModelMetadata {
             Map.entry("exerciseTypeId", "运动类型标识"), Map.entry("timeId", "时迹标识"),
             Map.entry("type", "类型"), Map.entry("author", "作者"), Map.entry("url", "链接"),
             Map.entry("status", "状态"), Map.entry("totalProgress", "总进度"),
-            Map.entry("currentProgress", "当前进度"), Map.entry("finishTime", "完成时间"),
+            Map.entry("currentProgress", "当前进度"), Map.entry("finishDate", "完成日期"),
             Map.entry("remark", "备注"),
             Map.entry("director", "导演"), Map.entry("rating", "评分"),
             Map.entry("bvid", "视频 BV 号"), Map.entry("ownerName", "UP 主"),

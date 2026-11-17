@@ -251,13 +251,13 @@
     "typeName": "ReadRecord",
     "root": "readRecords",
     "statsRoot": "readRecordStats",
-    "release": "read-record-v4",
+    "release": "read-record-v5",
     "role": "ai_reading_reader",
     "scope": "reading.read",
-    "description": "阅读书籍/文章、进度及完成情况；可按创建、开始或完成时间限定范围",
+    "description": "阅读书籍/文章、进度及完成情况；可按创建、开始或完成日期限定范围",
     "rangeFields": [
       "createdAt",
-      "startTime",
+      "startDate",
       "finishTime"
     ],
     "fields": {
@@ -309,16 +309,16 @@
         "sqlType": "INTEGER",
         "nullable": true
       },
-      "startTime": {
-        "column": "start_time",
-        "kind": "DATETIME",
-        "sqlType": "TIMESTAMP",
+      "startDate": {
+        "column": "start_date",
+        "kind": "DATE",
+        "sqlType": "DATE",
         "nullable": true
       },
-      "finishTime": {
-        "column": "finish_time",
-        "kind": "DATETIME",
-        "sqlType": "TIMESTAMP",
+      "finishDate": {
+        "column": "finish_date",
+        "kind": "DATE",
+        "sqlType": "DATE",
         "nullable": true
       },
       "createdAt": {
@@ -374,8 +374,8 @@
       "status",
       "totalProgress",
       "currentProgress",
-      "startTime",
-      "finishTime",
+      "startDate",
+      "finishDate",
       "createdAt",
       "remark",
       "updatedAt",
@@ -391,13 +391,13 @@
     "typeName": "Movie",
     "root": "movies",
     "statsRoot": "movieStats",
-    "release": "movie-v4",
+    "release": "movie-v5",
     "role": "ai_movie_reader",
     "scope": "movie.read",
-    "description": "影视观看状态、进度、个人评分；可按创建、开始或完成时间限定范围",
+    "description": "影视观看状态、进度、个人评分；可按创建、开始或完成日期限定范围",
     "rangeFields": [
       "createdAt",
-      "startTime",
+      "startDate",
       "finishTime"
     ],
     "fields": {
@@ -449,16 +449,16 @@
         "sqlType": "INTEGER",
         "nullable": true
       },
-      "startTime": {
-        "column": "start_time",
-        "kind": "DATETIME",
-        "sqlType": "TIMESTAMP",
+      "startDate": {
+        "column": "start_date",
+        "kind": "DATE",
+        "sqlType": "DATE",
         "nullable": true
       },
-      "finishTime": {
-        "column": "finish_time",
-        "kind": "DATETIME",
-        "sqlType": "TIMESTAMP",
+      "finishDate": {
+        "column": "finish_date",
+        "kind": "DATE",
+        "sqlType": "DATE",
         "nullable": true
       },
       "rating": {
@@ -520,8 +520,8 @@
       "status",
       "totalProgress",
       "currentProgress",
-      "startTime",
-      "finishTime",
+      "startDate",
+      "finishDate",
       "rating",
       "createdAt",
       "remark",

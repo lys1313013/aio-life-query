@@ -1,8 +1,8 @@
 {
-  "query": "query CompletedReading($start:String!,$end:String!){readRecords(where:{finishTime:{_gte:$start,_lt:$end},status:{_eq:\"completed\"}},limit:100){id title type author status totalProgress currentProgress startTime finishTime}}",
+  "query": "query CompletedReading($start:String!,$end:String!){readRecords(where:{finishDate:{_gte:$start,_lt:$end},status:{_eq:\"completed\"}},limit:100){id title type author status totalProgress currentProgress startDate finishDate}}",
   "variables": {
     "start": "2026-09-01",
     "end": "2026-10-01"
   },
-  "expectedRelease": "read-record-v4"
+  "expectedRelease": "read-record-v5"
 }

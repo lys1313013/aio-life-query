@@ -39,7 +39,7 @@ class LifeDatasetCompilerTest {
     @ParameterizedTest @ValueSource(strings={"read_record","movie"})
     void finishedRecordsCanBeQueriedWithoutRestrictingTheirCreationDate(String name) {
         var dataset = QueryDatasets.named(name);
-        assertDoesNotThrow(() -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"(where:{finishTime:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},status:{_eq:\"completed\"}}){id title status} }")));
+        assertDoesNotThrow(() -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"(where:{finishDate:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},status:{_eq:\"completed\"}}){id title status} }")));
         assertThrows(QueryException.class, () -> compiler.compile(request(dataset,"query Q { "+dataset.root()+"("+"where:{createdAt:{_gte:\"2026-09-01\",_lt:\"2026-10-01\"},status:{_eq:\"invented\"}}"+"){id} }")));
     }
 

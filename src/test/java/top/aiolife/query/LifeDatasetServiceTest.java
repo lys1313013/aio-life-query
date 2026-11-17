@@ -67,7 +67,7 @@ class LifeDatasetServiceTest {
         when(access.evaluate("token", "read_record")).thenReturn(user);
         var detail = json.valueToTree(service.catalog("token", "read_record"));
         assertTrue(detail.has("graphqlSdl"));
-        assertEquals("read-record-v4", detail.path("releaseId").asText());
+        assertEquals("read-record-v5", detail.path("releaseId").asText());
         assertEquals(4, detail.at("/fields/status/values").size());
         assertEquals(10000, detail.at("/limits/maxOffset").asInt());
         assertFalse(detail.has("schemaVersion"));

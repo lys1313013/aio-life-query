@@ -182,13 +182,13 @@ HTTP 工具请求见 [mcp-tools-call.json](examples/mcp-tools-call.json)，发�
 | --- | --- | --- | --- | --- |
 | `time_record` | `time` | `time-record-v5` | `timeRecords` / `timeRecordStats` | `date` |
 | `exercise_record` | `exercise` | `exercise-record-v3` | `exerciseRecords` / `exerciseRecordStats` | `exerciseDate` |
-| `read_record` | `reading` | `read-record-v4` | `readRecords` / `readRecordStats` | `createdAt`、`startTime`、`finishTime` |
-| `movie` | `movie` | `movie-v4` | `movies` / `movieStats` | `createdAt`、`startTime`、`finishTime` |
+| `read_record` | `reading` | `read-record-v5` | `readRecords` / `readRecordStats` | `createdAt`、`startDate`、`finishDate` |
+| `movie` | `movie` | `movie-v5` | `movies` / `movieStats` | `createdAt`、`startDate`、`finishDate` |
 | `b_video` | `video` | `b-video-v5` | `bVideos` / `bVideoStats` | `createdAt`、`lastWatched` |
 | `income_month` | `income` | `income-month-v2` | `incomeMonths` / `incomeMonthStats` | `month`（自然月第一天） |
 | `event_record` | `event` | `event-record-v1` | `eventRecords` / `eventRecordStats` | `eventDate` |
 
-每次查询至少为一个范围字段提供 `_gte` / `_lt` 半开区间，最长 366 天。日期使用 `YYYY-MM-DD`；DATETIME 还接受无时区的 `YYYY-MM-DDTHH:mm:ss`，按数据库本地时间比较。按 `finishTime` 与按 `createdAt` 查询含义不同，范围条件不会自动应用到其他时间字段。
+每次查询至少为一个范围字段提供 `_gte` / `_lt` 半开区间，最长 366 天。日期使用 `YYYY-MM-DD`；DATETIME 还接受无时区的 `YYYY-MM-DDTHH:mm:ss`，按数据库本地时间比较。按 `finishDate` 与按 `createdAt` 查询含义不同，范围条件不会自动应用到其他日期字段。
 
 每个查询只允许一个操作、一个根字段。支持已发布字段的别名、变量、筛选和排序；不支持 fragment、directive、内省、mutation、subscription、批量请求、逻辑 OR、`groupBy`、模糊搜索或任意跨表查询。明细使用 `limit/offset` 分页，默认按第一个范围字段降序，未指定 ID 排序时追加 `id: Asc`。
 
