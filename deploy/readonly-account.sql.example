@@ -7,9 +7,9 @@ GRANT SELECT (id, date, category_id, duration_minutes, create_user, start_minute
   ON public.time_record TO aio_query_read;
 GRANT SELECT (id, exercise_date, exercise_type_id, exercise_count, description, create_user, create_time, update_time, update_user, time_id, user_id, is_deleted)
   ON public.exercise_record TO aio_query_read;
-GRANT SELECT (id, title, type, author, url, status, total_progress, current_progress, start_time, finish_time, create_time, remark, update_time, create_user, update_user, user_id, is_deleted)
+GRANT SELECT (id, title, type, author, url, status, total_progress, current_progress, start_date, finish_date, create_time, remark, update_time, create_user, update_user, user_id, is_deleted)
   ON public.read_record TO aio_query_read;
-GRANT SELECT (id, title, type, director, url, status, total_progress, current_progress, start_time, finish_time, rating, create_time, remark, update_time, create_user, update_user, user_id, is_deleted)
+GRANT SELECT (id, title, type, director, url, status, total_progress, current_progress, start_date, finish_date, rating, create_time, remark, update_time, create_user, update_user, user_id, is_deleted)
   ON public.movie TO aio_query_read;
 GRANT SELECT (id, title, url, bvid, owner_name, duration_seconds, watched_duration_seconds, episodes, current_episode, status, last_watched, create_time, notes, aid, description, pages_info, create_user, update_user, update_time, user_id, is_deleted)
   ON public.b_video TO aio_query_read;
