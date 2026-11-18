@@ -20,7 +20,7 @@ GRANT SELECT (id, user_id, template_id, name, is_deleted)
 -- 升级现有只读账号时，只执行上面的 GRANT；先核对业务表和分类表的字段结构。
 
 -- 月收入模型仅需要这些源列，不授予额外表或写入权限。
-GRANT SELECT (user_id, income_type_id, inc_date, gross_amount, is_deleted)
+GRANT SELECT (user_id, income_type_id, income_date, gross_amount, is_deleted)
   ON public.income TO aio_query_read;
 
 -- 运动和月收入类型名称关系；保留公共、私有及个人覆盖的有效名称，排除已删除项。

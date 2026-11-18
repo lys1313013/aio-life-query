@@ -9,14 +9,14 @@ INSERT INTO exercise_record(id,exercise_date,exercise_type_id,exercise_count,use
  (3,'2026-10-01',9007199254740993,1000,102,0), (4,'2026-10-01',9007199254740993,999,101,1),
  (5,'2026-10-01',9007199254740994,1000,101,0), (6,'2027-01-01',9007199254740993,1000,101,0);
 CREATE TABLE income (id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL, income_type_id BIGINT NOT NULL,
- inc_date DATE NOT NULL, gross_amount DECIMAL(10,2) NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0);
+ income_date DATE NOT NULL, gross_amount DECIMAL(10,2) NOT NULL, is_deleted SMALLINT NOT NULL DEFAULT 0);
 INSERT INTO income VALUES
  (1,101,9007199254740995,'2026-01-01',10000,0), (2,101,9007199254740995,'2026-01-31',5000,0),
  (3,101,9007199254740995,'2026-02-01',14999.99,0), (4,102,9007199254740995,'2026-01-01',999999,0),
  (5,101,9007199254740995,'2026-01-01',999999,1), (6,101,9007199254740996,'2026-01-01',999999,0),
  (7,101,9007199254740995,'2027-01-01',999999,0);
 GRANT SELECT (id,exercise_date,exercise_type_id,exercise_count,description,create_user,create_time,update_time,update_user,time_record_id,user_id,is_deleted) ON public.exercise_record TO fixture_read;
-GRANT SELECT (user_id,income_type_id,inc_date,gross_amount,is_deleted) ON public.income TO fixture_read;
+GRANT SELECT (user_id,income_type_id,income_date,gross_amount,is_deleted) ON public.income TO fixture_read;
 
 CREATE TABLE user_dict_data (
  id BIGINT PRIMARY KEY, user_id BIGINT NULL, template_id BIGINT, dict_type VARCHAR(100),

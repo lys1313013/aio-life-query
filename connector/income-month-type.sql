@@ -10,7 +10,7 @@ SELECT CONCAT(r.user_id, ':', CAST(r.income_type_id AS TEXT), ':', CAST(r.month 
                            ORDER BY o.id DESC LIMIT 1), d.dict_label)
             ELSE d.dict_label END AS name
 FROM (
-    SELECT DISTINCT user_id, income_type_id, CAST(DATE_TRUNC('month', inc_date) AS DATE) AS month
+    SELECT DISTINCT user_id, income_type_id, CAST(DATE_TRUNC('month', income_date) AS DATE) AS month
     FROM income
     WHERE is_deleted = 0
 ) r
