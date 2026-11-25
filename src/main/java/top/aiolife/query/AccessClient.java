@@ -4,7 +4,9 @@ import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.JsonNode;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 public class AccessClient {
@@ -16,6 +18,24 @@ public class AccessClient {
     public Access evaluate(String token) { return evaluate(token, "time_record"); }
 
     public Access evaluate(String token, String dataset) {
+        return access(decision(token, dataset));
+    }
+
+    public record CatalogAccess(Access access, Set<String> allowedDatasets) {}
+
+    public CatalogAccess evaluateCatalog(String token) {
+        var data = decision(token, "catalog");
+        var datasets = data.path("allowedDatasets");
+        if (!datasets.isArray() || datasets.size() > QueryDatasets.all().size()) throw QueryException.denied();
+        Set<String> names = new HashSet<>();
+        for (JsonNode name : datasets) {
+            if (!name.isTextual() || QueryDatasets.all().stream().noneMatch(dataset -> dataset.name().equals(name.textValue()))
+                    || !names.add(name.textValue())) throw QueryException.denied();
+        }
+        return new CatalogAccess(access(data), Set.copyOf(names));
+    }
+
+    private JsonNode decision(String token, String dataset) {
         var definition = "catalog".equals(dataset) ? null : QueryDatasets.named(dataset);
         String role = definition == null ? "ai_query_catalog" : definition.role();
         String scope = definition == null ? "query.catalog" : definition.scope();
@@ -40,6 +60,10 @@ public class AccessClient {
                 || !data.path("credentialId").asText().matches("[a-f0-9]{32}")
                 || !java.util.Set.of("login", "api_key").contains(data.path("credentialType").asText())
                 || data.path("expiresAt").asLong() <= Instant.now().getEpochSecond()) throw QueryException.denied();
+        return data;
+    }
+
+    private Access access(JsonNode data) {
         return new Access(data.path("userId").asText(), data.path("appId").asText(), data.path("credentialId").asText(),
                 data.path("credentialType").asText(), data.path("expiresAt").asLong());
     }

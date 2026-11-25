@@ -111,6 +111,11 @@ class RuntimeStack:
                     status, output = 200, {'code': 0, 'data': {'userId': user, 'appId': 'aio-life-query',
                         'credentialId': 'a' * 32, 'credentialType': 'login', 'expiresAt': int(time.time()) + 3600,
                         'role': role, 'scopes': [scope]}}
+                    if name == 'catalog':
+                        output['data']['allowedDatasets'] = [
+                            item['name'] for item in metadata.DATASETS
+                            if (token, item['name']) not in stack.locked
+                        ]
                 content = json.dumps(output).encode()
                 self.send_response(status)
                 self.send_header('Content-Type', 'application/json')

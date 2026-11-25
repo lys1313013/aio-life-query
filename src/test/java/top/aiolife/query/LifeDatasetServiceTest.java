@@ -47,12 +47,15 @@ class LifeDatasetServiceTest {
     }
 
     @Test void lockedDatasetIsOmittedFromCatalogWithoutHidingOtherBusinesses() {
-        when(access.evaluate("token","catalog")).thenReturn(user);
-        when(access.evaluate("token")).thenReturn(user);
-        for(var dataset:QueryDatasets.all()) if(!dataset.name().equals("time_record")) when(access.evaluate("token",dataset.name())).thenReturn(user);
+        when(access.evaluateCatalog("token")).thenReturn(new AccessClient.CatalogAccess(user,
+                QueryDatasets.all().stream().map(QueryDatasets.Dataset::name).filter(name -> !name.equals("movie"))
+                        .collect(java.util.stream.Collectors.toSet())));
+        when(access.evaluate("token", "catalog")).thenReturn(user);
         when(access.evaluate("token","movie")).thenThrow(new QueryException("SECONDARY_LOCK_REQUIRED",403,"fixture"));
         var catalog=json.valueToTree(service.catalog("token",null));
         assertEquals(6,catalog.size());
+        verify(access).evaluateCatalog("token");
+        verifyNoMoreInteractions(access);
         for(var entry:catalog) {
             assertNotEquals("movie",entry.path("name").asText());
             assertFalse(entry.has("graphqlSdl"));

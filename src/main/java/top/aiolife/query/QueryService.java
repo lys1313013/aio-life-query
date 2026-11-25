@@ -31,20 +31,19 @@ public class QueryService {
     }
 
     public Object catalog(String token, String name) {
-        var user = access.evaluate(token, "catalog"); store.rate(user.userId());
         if (name != null) {
+            var user = access.evaluate(token, "catalog"); store.rate(user.userId());
             var dataset = QueryDatasets.named(name);
             authority(token, dataset);
             audit(user, "CATALOG_READ", dataset);
             return describe(dataset);
         }
+        var catalog = access.evaluateCatalog(token);
+        var user = catalog.access();
+        store.rate(user.userId());
         var available = new ArrayList<Object>();
         for (var dataset : QueryDatasets.all()) {
-            try { authority(token, dataset); }
-            catch (QueryException error) {
-                if (error.status() == 403) continue;
-                throw error;
-            }
+            if (!catalog.allowedDatasets().contains(dataset.name())) continue;
             available.add(Map.of("name", dataset.name(), "title", QueryModelMetadata.title(dataset.name()), "description", dataset.description(),
                     "capabilities", List.of("details", "aggregate")));
         }

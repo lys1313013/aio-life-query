@@ -92,7 +92,7 @@ sequenceDiagram
 ```
 
 - REST、GraphQL 和 MCP 的身份仅来自 `Authorization: Bearer ...`。用户使用现有登录 Token 或 API Key，不能通过参数、角色或 `X-Hasura-*` 请求头指定身份。
-- 网关实时调用 `POST /api/internal/query/access/check-token`，不解析 JWT、不缓存认证结果、不读取后端 Redis 登录会话。后端同时检查 `/mcp/tools` 及数据集对应业务的二级锁；无权限的数据集不出现在目录中，直接描述或执行也会拒绝。
+- 网关实时调用 `POST /api/internal/query/access/check-token`，不解析 JWT、不缓存认证结果、不读取后端 Redis 登录会话。后端同时检查 `/mcp/tools` 及数据集对应业务的二级锁；目录请求一次取得可见数据集集合，其余请求仍按目标数据集单独鉴权。无权限的数据集不出现在目录中，直接描述或执行也会拒绝。
 - 执行票据存入现有 Redis，绑定用户、数据集和发布版本，有效期最多 30 秒且不超过原凭据有效期，原子消费一次。Webhook 和返回结果前不再远程鉴权；退出、撤销凭据或重新锁定阻止后续请求，已经获准的在途查询可以完成。
 - 明细和汇总都受 `user_id = 当前用户 AND is_deleted = 0` 约束。查询中的 `userId`、`isDeleted` 只是与行权限取交集的筛选条件。PostgreSQL 账号仅允许白名单列 SELECT，Connector 不生成写入 procedures，不接受请求级连接地址覆盖；网关不开放 mutation 或 explain。
 - 没有结果缓存；依赖、结果校验或审计失败时拒绝返回成功，不返回 Hasura 部分数据。内部接口和基础设施不能作为公网查询入口。
